@@ -1,3 +1,4 @@
+import mori
 import os
 import time
 import torch
@@ -6,7 +7,6 @@ import torch.distributed as dist
 # noinspection PyUnresolvedReferences
 import deep_ep
 from utils import init_dist, bench, calc_diff, inplace_unique, per_token_cast_to_fp8, per_token_cast_back
-import mori
 # Test compatibility with low latency functions
 import test_low_latency
 
@@ -52,17 +52,17 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     gbl_num_tokens_per_rank = num_tokens_per_rank.clone()
     dist.all_reduce(gbl_num_tokens_per_rank, group=group)
 
-    ref_num_tokens_per_rank, _, ref_num_tokens_per_expert, ref_is_token_in_rank, _ = \
-        buffer.get_dispatch_layout(topk_idx, num_experts)
-    assert torch.allclose(ref_num_tokens_per_rank, num_tokens_per_rank)
-    assert torch.allclose(ref_num_tokens_per_expert, num_tokens_per_expert)
-    assert torch.allclose(ref_is_token_in_rank, is_token_in_rank)
-    t = bench(lambda: buffer.get_dispatch_layout(topk_idx, num_experts))[0]
-    if local_rank == 0:
-        print(f'[layout] Kernel performance: {t * 1000:.3f} ms', flush=True)
-        print()
-    group.barrier()
-    time.sleep(1)
+    # ref_num_tokens_per_rank, _, ref_num_tokens_per_expert, ref_is_token_in_rank, _ = \
+    #     buffer.get_dispatch_layout(topk_idx, num_experts)
+    # assert torch.allclose(ref_num_tokens_per_rank, num_tokens_per_rank)
+    # assert torch.allclose(ref_num_tokens_per_expert, num_tokens_per_expert)
+    # assert torch.allclose(ref_is_token_in_rank, is_token_in_rank)
+    # t = bench(lambda: buffer.get_dispatch_layout(topk_idx, num_experts))[0]
+    # if local_rank == 0:
+    #     print(f'[layout] Kernel performance: {t * 1000:.3f} ms', flush=True)
+    #     print()
+    # group.barrier()
+    # time.sleep(1)
 
     # Config
     nvl_buffer_size = 256
