@@ -11,7 +11,7 @@ def init_dist(local_rank: int, num_local_ranks: int, backend: str = 'nccl'):
     if backend == 'nccl':
         ip = os.getenv('MASTER_ADDR', '127.0.0.1')
         port = int(os.getenv('MASTER_PORT', '8361'))
-        node_rank = int(os.getenv('RANK', 0))
+    node_rank = int(os.getenv('RANK', 0))
     num_nodes = int(os.getenv('WORLD_SIZE', 1))
     assert (num_local_ranks < 8 and num_nodes == 1) or num_local_ranks == 8
     if backend == 'nccl':
