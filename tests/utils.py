@@ -21,6 +21,12 @@ def init_dist(local_rank: int, num_local_ranks: int, backend: str = 'nccl'):
             world_size=num_nodes * num_local_ranks,
             rank=node_rank * num_local_ranks + local_rank
         )
+    else if backend == 'gloo':
+        dist.init_process_group(
+            backend='gloo',
+            world_size=num_nodes * num_local_ranks,
+            rank=node_rank * num_local_ranks + local_rank
+        )
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device('cuda')
     torch.cuda.set_device(local_rank)
