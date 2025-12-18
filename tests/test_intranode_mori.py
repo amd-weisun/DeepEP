@@ -108,7 +108,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     assert gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() == recv_num_tokens_per_expert_list
                     if current_x is not x_pure_rand:
                         check_data(recv_x, rank_prefix_matrix)
-                    if with_topk:
+                    # if with_topk:
                         # Check `topk_idx`
                         # if  local_rank == 0:
                         #     print(f'[debug] recv_topk_idx (rank {local_rank}):', recv_topk_idx.cpu(), flush=True)
