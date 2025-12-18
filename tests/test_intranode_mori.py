@@ -177,6 +177,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
         for nvl_chunk_size in range(4, 150, 4):
             config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size)
             tune_args = {'x': current_x, 'handle': handle, 'config': config}
+            tune_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
             t = bench(lambda: buffer.dispatch(**tune_args))[0]
             if t < best_time:
                 best_time, best_results = t, (num_sms, nvl_chunk_size)
