@@ -98,7 +98,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     # Checks
                     rank_prefix_matrix = handle[0]
                     assert gbl_num_tokens_per_rank[rank].item() == recv_x.size(0), f'{gbl_num_tokens_per_rank[rank].item()} != {recv_x.size(0)}'
-                    if gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() is not recv_num_tokens_per_expert_list:
+                    if (gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() == recv_num_tokens_per_expert_list) is not True:
                         if local_rank == 0:
                             print(f'[Error] Mismatch in num_tokens_per_expert on rank {local_rank}', flush=True)
                             print('Expected num_tokens_per_expert:', flush=True)
