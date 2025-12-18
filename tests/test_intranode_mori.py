@@ -194,6 +194,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
             dist.all_gather(all_best_fp8_results_list, best_dispatch_results, group=group)
             best_dispatch_results = all_best_fp8_results_list[0].tolist()
     # dispatch_config = deep_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size)
+    dispatch_config = None
 
     dispatch_args = {'x': x, 'num_tokens_per_rank': num_tokens_per_rank,
                      'is_token_in_rank': is_token_in_rank, 'num_tokens_per_expert': num_tokens_per_expert,
