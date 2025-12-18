@@ -145,6 +145,8 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                         dispatch_args.update({'previous_event': buffer.capture()})
                     combined_x, combined_topk_weights, event = buffer.combine(**combine_args)
                     event.current_stream_wait() if async_mode else ()
+                    torch.cuda.synchronize()
+                    dist.barrier()
                     combined_tensor = combined_x[0] if isinstance(combined_x, tuple) else combined_x
                     check_x = combined_tensor.float() / is_token_in_rank.sum(dim=1).unsqueeze(1)
                     ref_x = x_pure_rand if current_x is x_pure_rand else x
