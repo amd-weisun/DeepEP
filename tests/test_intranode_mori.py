@@ -152,7 +152,12 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     if with_topk:
                         check_topk_weights = combined_topk_weights if (current_x is x_pure_rand) else (combined_topk_weights / is_token_in_rank.sum(dim=1).unsqueeze(1))
                         ref_topk_weights = topk_weights_pure_rand if current_x is x_pure_rand else topk_weights
-                        assert calc_diff(check_topk_weights, ref_topk_weights) < 1e-9
+                        diff = calc_diff(check_topk_weights, ref_topk_weights)
+                        if diff >= 1e-9:
+                            print(f'[debug] calc_diff for topk weights: {diff}', flush=True)
+                            print('[debug] check_topk_weights:', check_topk_weights, flush=True)
+                            print('[debug] ref_topk_weights:', ref_topk_weights, flush=True)
+                        assert diff < 1e-9
 
                     # For later tuning
                     dispatch_bf16_nvl_recv_bytes = recv_x.numel() * 2
