@@ -196,7 +196,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     # dispatch_config = deep_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size)
     dispatch_config = None
 
-    dispatch_args = {'x': x, 'num_tokens_per_rank': num_tokens_per_rank,
+    dispatch_args = {'x': x_pure_rand, 'num_tokens_per_rank': num_tokens_per_rank,
                      'is_token_in_rank': is_token_in_rank, 'num_tokens_per_expert': num_tokens_per_expert,
                      'config': dispatch_config if dispatch_config is not None else config}
     dispatch_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
@@ -204,14 +204,14 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
 
     # Tune combine performance
     best_time, best_results = 1e10, None
-    for nvl_chunk_size in range(1, 35, 1):
-        config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size)
-        tune_args = {'x': recv_x, 'handle': handle, 'config': config}
-        t = bench(lambda: buffer.combine(**tune_args))[0]
-        if local_rank == 0:
-            print(f'[tuning] SMs {num_sms}, NVL chunk {nvl_chunk_size}: {combine_bf16_nvl_send_bytes / 1e9 / t:.2f} GB/s (NVL), time {t * 1000 * 1000:.2f} us', flush=True)
-            if t < best_time:
-                best_time, best_results = t, (num_sms, nvl_chunk_size)
+    # for nvl_chunk_size in range(1, 35, 1):
+    #     config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size)
+    tune_args = {'x': recv_x, 'handle': handle}
+    t = bench(lambda: buffer.combine(**tune_args))[0]
+    if local_rank == 0:
+        print(f'[tuning] SMs {num_sms}, NVL chunk {nvl_chunk_size}: {combine_bf16_nvl_send_bytes / 1e9 / t:.2f} GB/s (NVL), time {t * 1000 * 1000:.2f} us', flush=True)
+        if t < best_time:
+            best_time, best_results = t, (num_sms, nvl_chunk_size)
 
     if local_rank == 0:
         print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}: {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL), time {best_time * 1000 * 1000:.2f} us', flush=True)
