@@ -207,15 +207,18 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     # for nvl_chunk_size in range(1, 35, 1):
     #     config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size)
     tune_args = {'x': recv_x, 'handle': handle}
-    t = bench(lambda: buffer.combine(**tune_args))[0]
-    if local_rank == 0:
-        print(f'[tuning] SMs {num_sms}, NVL chunk {nvl_chunk_size}: {combine_bf16_nvl_send_bytes / 1e9 / t:.2f} GB/s (NVL), time {t * 1000 * 1000:.2f} us', flush=True)
-        if t < best_time:
-            best_time, best_results = t, (num_sms, nvl_chunk_size)
+    torch.cuda.synchronize()
+    buffer.combine(**tune_args)
+    torch.cuda.synchronize()
+    # t = bench(lambda: buffer.combine(**tune_args))[0]
+    # if local_rank == 0:
+    #     print(f'[tuning] SMs {num_sms}, NVL chunk {nvl_chunk_size}: {combine_bf16_nvl_send_bytes / 1e9 / t:.2f} GB/s (NVL), time {t * 1000 * 1000:.2f} us', flush=True)
+    #     if t < best_time:
+    #         best_time, best_results = t, (num_sms, nvl_chunk_size)
 
-    if local_rank == 0:
-        print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}: {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL), time {best_time * 1000 * 1000:.2f} us', flush=True)
-        print()
+    # if local_rank == 0:
+    #     print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}: {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL), time {best_time * 1000 * 1000:.2f} us', flush=True)
+    #     print()
 
 
 # noinspection PyUnboundLocalVariable
