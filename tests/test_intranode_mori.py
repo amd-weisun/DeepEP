@@ -171,32 +171,32 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
         print()
 
     # Tune dispatch performance
-    best_dispatch_results = None
-    fp8_factor = (1 + 4 / 128) / 2
-    for current_x in (x_pure_rand, ):
-        best_time, best_results = 1e10, None
-        nvl_recv_bytes = (dispatch_bf16_nvl_recv_bytes * fp8_factor) if isinstance(current_x, tuple) else dispatch_bf16_nvl_recv_bytes
-        for nvl_chunk_size in range(4, 150, 4):
-            config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size)
-            tune_args = {'x': current_x, 'handle': handle, 'config': config}
-            tune_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
-            t = bench(lambda: buffer.dispatch(**tune_args))[0]
-            if t < best_time:
-                best_time, best_results = t, (num_sms, nvl_chunk_size)
-            if local_rank == 0:
-                print(f'[tuning] SMs {num_sms}, NVL chunk {nvl_chunk_size}: {nvl_recv_bytes / 1e9 / t:.2f} GB/s (NVL), time {t * 1000 * 1000:.2f} us', flush=True)
-        if local_rank == 0:
-            print(f'[tuning] Best dispatch ({"FP8" if isinstance(current_x, tuple) else "BF16"}): SMs {best_results[0]}, NVL chunk {best_results[1]}, {nvl_recv_bytes / 1e9 / best_time:.2f} GB/s (NVL), time {best_time * 1000 * 1000:.2f} us', flush=True)
-            print()
+    # best_dispatch_results = None
+    # fp8_factor = (1 + 4 / 128) / 2
+    # for current_x in (x_pure_rand, ):
+    #     best_time, best_results = 1e10, None
+    #     nvl_recv_bytes = (dispatch_bf16_nvl_recv_bytes * fp8_factor) if isinstance(current_x, tuple) else dispatch_bf16_nvl_recv_bytes
+    #     for nvl_chunk_size in range(4, 150, 4):
+    #         config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size)
+    #         tune_args = {'x': current_x, 'handle': handle, 'config': config}
+    #         tune_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
+    #         t = bench(lambda: buffer.dispatch(**tune_args))[0]
+    #         if t < best_time:
+    #             best_time, best_results = t, (num_sms, nvl_chunk_size)
+    #         if local_rank == 0:
+    #             print(f'[tuning] SMs {num_sms}, NVL chunk {nvl_chunk_size}: {nvl_recv_bytes / 1e9 / t:.2f} GB/s (NVL), time {t * 1000 * 1000:.2f} us', flush=True)
+    #     if local_rank == 0:
+    #         print(f'[tuning] Best dispatch ({"FP8" if isinstance(current_x, tuple) else "BF16"}): SMs {best_results[0]}, NVL chunk {best_results[1]}, {nvl_recv_bytes / 1e9 / best_time:.2f} GB/s (NVL), time {best_time * 1000 * 1000:.2f} us', flush=True)
+    #         print()
 
-        if isinstance(current_x, tuple):
-            # Gather FP8 the best config from rank 0
-            best_dispatch_results = torch.tensor([best_results[0], best_results[1]], dtype=torch.int32, device='cuda')
-            all_best_fp8_results_list = [torch.zeros_like(best_dispatch_results) for _ in range(torch.distributed.get_world_size())]
-            dist.all_gather(all_best_fp8_results_list, best_dispatch_results, group=group)
-            best_dispatch_results = all_best_fp8_results_list[0].tolist()
-    # dispatch_config = deep_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size)
-    dispatch_config = None
+    #     if isinstance(current_x, tuple):
+    #         # Gather FP8 the best config from rank 0
+    #         best_dispatch_results = torch.tensor([best_results[0], best_results[1]], dtype=torch.int32, device='cuda')
+    #         all_best_fp8_results_list = [torch.zeros_like(best_dispatch_results) for _ in range(torch.distributed.get_world_size())]
+    #         dist.all_gather(all_best_fp8_results_list, best_dispatch_results, group=group)
+    #         best_dispatch_results = all_best_fp8_results_list[0].tolist()
+    # # dispatch_config = deep_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size)
+    # dispatch_config = None
 
     dispatch_args = {'x': x_pure_rand, 'num_tokens_per_rank': num_tokens_per_rank,
                      'is_token_in_rank': is_token_in_rank, 'num_tokens_per_expert': num_tokens_per_expert,
