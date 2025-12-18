@@ -99,12 +99,12 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     rank_prefix_matrix = handle[0]
                     assert gbl_num_tokens_per_rank[rank].item() == recv_x.size(0), f'{gbl_num_tokens_per_rank[rank].item()} != {recv_x.size(0)}'
                     if gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() is not recv_num_tokens_per_expert_list:
-                        # if local_rank == 0:
-                        print(f'[Error] Mismatch in num_tokens_per_expert on rank {rank}', flush=True)
-                        print('Expected num_tokens_per_expert:', flush=True)
-                        print(gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist())
-                        print('received num_tokens_per_expert:', flush=True)
-                        print(recv_num_tokens_per_expert_list)
+                        if local_rank == rank:
+                            print(f'[Error] Mismatch in num_tokens_per_expert on rank {rank}', flush=True)
+                            print('Expected num_tokens_per_expert:', flush=True)
+                            print(gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist())
+                            print('received num_tokens_per_expert:', flush=True)
+                            print(recv_num_tokens_per_expert_list)
                     assert gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() == recv_num_tokens_per_expert_list
                     if current_x is not x_pure_rand:
                         check_data(recv_x, rank_prefix_matrix)
