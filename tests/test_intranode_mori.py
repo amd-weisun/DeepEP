@@ -200,7 +200,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                      'is_token_in_rank': is_token_in_rank, 'num_tokens_per_expert': num_tokens_per_expert,
                      'config': dispatch_config if dispatch_config is not None else config}
     dispatch_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
-    recv_x, _, _, _, handle, _ = buffer.dispatch(**dispatch_args)
+    recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, event = buffer.dispatch(**dispatch_args)
 
     # Tune combine performance
     best_time, best_results = 1e10, None
