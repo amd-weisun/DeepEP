@@ -84,8 +84,9 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                 for with_topk in (True, ): # 
                     if local_rank == 0:
                         print(f'[testing] Running with {"FP8" if isinstance(current_x, tuple) else "BF16"}, {"with" if with_topk else "without"} top-k (async={async_mode}, previous={previous_mode}) ...', flush=True, end='')
+                        print(f'current_x.shape {current_x.shape if not isinstance(current_x, tuple) else (current_x[0].shape)}, topk_idx shape {topk_idx.shape if with_topk else "N/A"}, num_tokens_per_expert {num_tokens_per_expert} ', flush=True, end='')
                     dispatch_args = {'x': current_x, 'num_tokens_per_rank': num_tokens_per_rank,  'is_token_in_rank': is_token_in_rank,
-                                     'num_tokens_per_expert': num_tokens_per_expert, 'config': config, 'async_finish': async_mode}
+                                     'num_tokens_per_expert': num_tokens_per_expert, 'config': config, 'async_finish': async_mode}                    
                     if with_topk:
                         dispatch_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
                     if previous_mode:
