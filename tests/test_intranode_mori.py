@@ -110,10 +110,11 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                         check_data(recv_x, rank_prefix_matrix)
                     if with_topk:
                         # Check `topk_idx`
-                        print(f'[debug] recv_topk_idx (rank {local_rank}):', recv_topk_idx.cpu(), flush=True)
-                        print(f'[debug] recv_num_tokens_per_expert_list (rank {local_rank}):', recv_num_tokens_per_expert_list, flush=True)
-                        print(f'[debug] (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item(): {(recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item()}', flush=True)
-                        print(f'[debug] recv_topk_idx.numel(): {recv_topk_idx.numel()}', flush=True)
+                        if  local_rank == 0:
+                            print(f'[debug] recv_topk_idx (rank {local_rank}):', recv_topk_idx.cpu(), flush=True)
+                            print(f'[debug] recv_num_tokens_per_expert_list (rank {local_rank}):', recv_num_tokens_per_expert_list, flush=True)
+                            print(f'[debug] (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item(): {(recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item()}', flush=True)
+                            print(f'[debug] recv_topk_idx.numel(): {recv_topk_idx.numel()}', flush=True)
                         assert (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item() == recv_topk_idx.numel()
                         for i, count in enumerate(recv_num_tokens_per_expert_list):
                             assert recv_topk_idx.eq(i).sum().item() == count
