@@ -171,7 +171,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     # Tune dispatch performance
     best_dispatch_results = None
     fp8_factor = (1 + 4 / 128) / 2
-    for current_x in (x_e4m3, x):
+    for current_x in (x_pure_rand, ):
         best_time, best_results = 1e10, None
         nvl_recv_bytes = (dispatch_bf16_nvl_recv_bytes * fp8_factor) if isinstance(current_x, tuple) else dispatch_bf16_nvl_recv_bytes
         for nvl_chunk_size in range(4, 150, 4):
@@ -198,6 +198,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     dispatch_args = {'x': x, 'num_tokens_per_rank': num_tokens_per_rank,
                      'is_token_in_rank': is_token_in_rank, 'num_tokens_per_expert': num_tokens_per_expert,
                      'config': dispatch_config if dispatch_config is not None else config}
+    dispatch_args.update({'topk_idx': topk_idx, 'topk_weights': topk_weights_pure_rand if current_x is x_pure_rand else topk_weights})
     recv_x, _, _, _, handle, _ = buffer.dispatch(**dispatch_args)
 
     # Tune combine performance
