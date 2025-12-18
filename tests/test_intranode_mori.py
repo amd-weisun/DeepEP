@@ -99,8 +99,9 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     rank_prefix_matrix = handle[0]
                     assert gbl_num_tokens_per_rank[rank].item() == recv_x.size(0), f'{gbl_num_tokens_per_rank[rank].item()} != {recv_x.size(0)}'
                     if gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() is not recv_num_tokens_per_expert_list:
-                        for i, count in enumerate(recv_num_tokens_per_expert_list):
-                            assert gbl_num_tokens_per_expert[i].item() == count, f'{gbl_num_tokens_per_expert[i].item()} != {count}'
+                        print(gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist())
+                        print(recv_num_tokens_per_expert_list)
+                    assert gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() == recv_num_tokens_per_expert_list
                     if current_x is not x_pure_rand:
                         check_data(recv_x, rank_prefix_matrix)
                     if with_topk:
