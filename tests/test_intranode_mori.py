@@ -13,13 +13,15 @@ import test_low_latency
 
 def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: mori.Buffer, group: dist.ProcessGroup):
     # Settings
-    num_tokens, hidden, num_topk, num_experts = 128, 7168, 8, (32 // num_ranks) * num_ranks
+    num_tokens, hidden, num_topk, num_experts = 8, 8, 4, (16 // num_ranks) * num_ranks
     assert num_experts % num_ranks == 0
     if local_rank == 0:
         print(f'[config] num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}', flush=True)
 
     # Random data
-    x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
+    row_values = torch.arange(num_tokens, dtype=torch.float32, device=buffer.device) + rank * num_tokens
+    x = row_values.unsqueeze(1).expand(num_tokens, hidden_dim).to(torch.bfloat16)
+    # x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x_e4m3 = per_token_cast_to_fp8(x)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
@@ -71,16 +73,26 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     # Test dispatch
     # noinspection PyShadowingNames
     def check_data(check_x, rank_prefix_matrix):
-        assert torch.allclose(check_x.amin(dim=1), check_x.amax(dim=1))
-        check_start = 0
-        for i in range(num_ranks):
-            check_end = rank_prefix_matrix[i][rank].item()
-            assert (check_x[check_start:check_end, :].int() - i).sum().item() == 0
-            check_start = check_end
+        try:
+            assert torch.allclose(check_x.amin(dim=1), check_x.amax(dim=1))
+            check_start = 0
+            for i in range(num_ranks):
+                check_end = rank_prefix_matrix[i][rank].item()
+                assert (check_x[check_start:check_end, :].int() - i).sum().item() == 0
+                check_start = check_end
+        except AssertionError:
+            print(f'[debug] check_data failure on rank {rank}:', flush=True)
+            print('   check_x shape', tuple(check_x.shape), flush=True)
+            print('   rank_prefix_matrix row for this rank', rank_prefix_matrix[:, rank].cpu(), flush=True)
+            print('   num_ranks', num_ranks, 'rank', rank, flush=True)
+            if check_x.numel() > 0:
+                sample = check_x[:min(5, check_x.size(0)), :min(5, check_x.size(1))]
+                print('   check_x sample', sample.cpu(), flush=True)
+            raise
 
     for previous_mode in (False, ):
         for async_mode in (False,):
-            for current_x in (x_pure_rand, ):
+            for current_x in ( x, x_e4m3 ):
                 for with_topk in (True, ): # 
                     if local_rank == 0:
                         print(f'[testing] Running with {"FP8" if isinstance(current_x, tuple) else "BF16"}, {"with" if with_topk else "without"} top-k (async={async_mode}, previous={previous_mode}) ...', flush=True, end='')
@@ -108,22 +120,22 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     assert gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].tolist() == recv_num_tokens_per_expert_list
                     if current_x is not x_pure_rand:
                         check_data(recv_x, rank_prefix_matrix)
-                    # if with_topk:
+                    if with_topk:
                         # Check `topk_idx`
-                        # if  local_rank == 0:
-                        #     print(f'[debug] recv_topk_idx (rank {local_rank}):', recv_topk_idx.cpu(), flush=True)
-                        #     print(f'[debug] recv_num_tokens_per_expert_list (rank {local_rank}):', recv_num_tokens_per_expert_list, flush=True)
-                        #     print(f'[debug] (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item(): {(recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item()}', flush=True)
-                        #     print(f'[debug] recv_topk_idx.numel(): {recv_topk_idx.numel()}', flush=True)
-                        # assert (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item() == recv_topk_idx.numel()
-                        # for i, count in enumerate(recv_num_tokens_per_expert_list):
-                        #     assert recv_topk_idx.eq(i).sum().item() == count
+                        if  local_rank == 0:
+                            print(f'[debug] recv_topk_idx (rank {local_rank}):', recv_topk_idx.cpu(), flush=True)
+                            print(f'[debug] recv_num_tokens_per_expert_list (rank {local_rank}):', recv_num_tokens_per_expert_list, flush=True)
+                            print(f'[debug] (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item(): {(recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item()}', flush=True)
+                            print(f'[debug] recv_topk_idx.numel(): {recv_topk_idx.numel()}', flush=True)
+                        assert (recv_topk_idx.eq(-1) | ((recv_topk_idx >= 0) & (recv_topk_idx < (num_experts // num_ranks)))).sum().item() == recv_topk_idx.numel()
+                        for i, count in enumerate(recv_num_tokens_per_expert_list):
+                            assert recv_topk_idx.eq(i).sum().item() == count
 
-                        # # Check `topk_weights`
-                        # if current_x is not x_pure_rand:
-                        #     print(f'[debug] recv_topk_weights (rank {local_rank}):', recv_topk_weights.cpu(), flush=True)
-                        #     recv_topk_weights[recv_topk_idx.eq(-1)] = recv_topk_weights.amax(dim=1, keepdim=True).expand_as(recv_topk_weights)[recv_topk_idx.eq(-1)]
-                        #     check_data(recv_topk_weights, rank_prefix_matrix)
+                        # Check `topk_weights`
+                        if current_x is not x_pure_rand:
+                            print(f'[debug] recv_topk_weights (rank {local_rank}):', recv_topk_weights.cpu(), flush=True)
+                            recv_topk_weights[recv_topk_idx.eq(-1)] = recv_topk_weights.amax(dim=1, keepdim=True).expand_as(recv_topk_weights)[recv_topk_idx.eq(-1)]
+                            check_data(recv_topk_weights, rank_prefix_matrix)
 
                     # Test cached dispatch (must without top-k staffs)
                     # NOTES: handle must be refreshed
