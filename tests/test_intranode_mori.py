@@ -73,6 +73,9 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     # Test dispatch
     # noinspection PyShadowingNames
     def check_data(check_x, rank_prefix_matrix):
+        print(f'[debug] check_data on rank {rank} ...', flush=True)
+        print(f'[debug] check_x:', check_x.cpu(), flush=True)
+        print(f'[debug] rank_prefix_matrix:', rank_prefix_matrix.cpu(), flush=True)
         try:
             assert torch.allclose(check_x.amin(dim=1), check_x.amax(dim=1))
             check_start = 0
@@ -82,9 +85,9 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                 check_start = check_end
         except AssertionError:
             print(f'[debug] check_data failure on rank {rank}:', flush=True)
-            print('   check_x shape', tuple(check_x.shape), flush=True)
-            print('   rank_prefix_matrix row for this rank', rank_prefix_matrix[:, rank].cpu(), flush=True)
-            print('   num_ranks', num_ranks, 'rank', rank, flush=True)
+            print('check_x shape', tuple(check_x.shape), flush=True)
+            print('rank_prefix_matrix row for this rank', rank_prefix_matrix[:, rank].cpu(), flush=True)
+            print('num_ranks', num_ranks, 'rank', rank, flush=True)
             if check_x.numel() > 0:
                 sample = check_x[:min(5, check_x.size(0)), :min(5, check_x.size(1))]
                 print('   check_x sample', sample.cpu(), flush=True)
