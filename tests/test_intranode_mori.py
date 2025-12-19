@@ -246,7 +246,7 @@ def test_loop(local_rank: int, num_local_ranks: int):
     num_tokens, hidden, num_topk, num_experts = 8, 8, 4, (16 // num_ranks) * num_ranks
 
     buffer = mori.Buffer(group, int(1e9), num_rdma_bytes, low_latency_mode=test_ll_compatibility,
-                            num_qps_per_rank=(ll_num_experts // num_ranks if test_ll_compatibility else num_experts // num_ranks ), max_num_inp_token_per_rank = num_tokens, gpu_per_node =num_local_ranks )
+                            num_qps_per_rank=(ll_num_experts // num_ranks if test_ll_compatibility else num_experts // num_ranks ), max_num_inp_token_per_rank = num_tokens, num_experts_per_token = num_topk , gpu_per_node =num_local_ranks )
     torch.manual_seed(rank)
 
     for i in (64, ):
