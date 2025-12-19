@@ -50,7 +50,13 @@ def assert_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1
             print(f'[debug] {name} tensor b shape {tuple(b.shape)}:', flush=True)
             print(b.cpu(), flush=True)
         raise AssertionError(f"{name} mismatch (max diff {max_diff:.6e})")
-
+    else:
+        if rank is None or rank == 0:
+            print(f'[debug] {name} match.', flush=True)
+            print(f'[debug] {name} tensor a shape {tuple(a.shape)}:', flush=True)
+            print(a.cpu(), flush=True)
+            print(f'[debug] {name} tensor b shape {tuple(b.shape)}:', flush=True)
+            print(b.cpu(), flush=True)
 
 def compare_buffers(local_rank: int, num_local_ranks: int):
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
@@ -110,14 +116,26 @@ def compare_buffers(local_rank: int, num_local_ranks: int):
             print('  deep_ep:', deep_num_list, flush=True)
             print('  mori  :', mori_num_list, flush=True)
         raise AssertionError('num_tokens_per_expert_list differs')
+    else:
+        if rank == 0:
+            print(f'[debug] rank {rank} num_tokens_per_expert_list match: {deep_num_list}', flush=True)
+            print('  deep_ep:', deep_num_list, flush=True)
+            print('  mori  :', mori_num_list, flush=True)
+    assert_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank)
+    assert_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank)
     if not torch.equal(deep_topk_idx, mori_topk_idx):
         if rank == 0:
             print('[debug] topk indices mismatch', flush=True)
             print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
             print('  mori  :', mori_topk_idx.cpu(), flush=True)
         raise AssertionError('topk indices differ')
-    assert_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank)
-    assert_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank)
+    else:
+        if rank == 0:
+            print(f'[debug] rank {rank} topk indices match.', flush=True)
+            print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+            print('  mori  :', mori_topk_idx.cpu(), flush=True)
+        
+
 
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
                                                                     topk_weights=deep_topk_weights,
