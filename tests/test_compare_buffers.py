@@ -45,17 +45,17 @@ def assert_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1
         max_diff = torch.max(diff)
         if rank is None or rank == 0:
             print(f'[debug] {name} mismatch: max diff {max_diff:.6e}', flush=True)
-            print(f'[debug] {name} tensor a shape {tuple(a.shape)}:', flush=True)
+            print(f'[debug] {name} tensor deep_ep shape {tuple(a.shape)}:', flush=True)
             print(a.cpu(), flush=True)
-            print(f'[debug] {name} tensor b shape {tuple(b.shape)}:', flush=True)
+            print(f'[debug] {name} tensor mori shape {tuple(b.shape)}:', flush=True)
             print(b.cpu(), flush=True)
         raise AssertionError(f"{name} mismatch (max diff {max_diff:.6e})")
     else:
         if rank is None or rank == 0:
             print(f'[debug] {name} match.', flush=True)
-            print(f'[debug] {name} tensor a shape {tuple(a.shape)}:', flush=True)
+            print(f'[debug] {name} tensor deep_ep shape {tuple(a.shape)}:', flush=True)
             print(a.cpu(), flush=True)
-            print(f'[debug] {name} tensor b shape {tuple(b.shape)}:', flush=True)
+            print(f'[debug] {name} tensor mori shape {tuple(b.shape)}:', flush=True)
             print(b.cpu(), flush=True)
 
 def compare_buffers(local_rank: int, num_local_ranks: int):
