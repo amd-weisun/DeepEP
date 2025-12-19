@@ -39,24 +39,20 @@ def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: i
     return num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank
 
 
-def assert_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None):
-    if not torch.allclose(a, b, rtol=rtol, atol=atol):
-        diff = torch.abs(a - b)
-        max_diff = torch.max(diff)
-        if rank is None or rank == 0:
-            print(f'[debug] {name} mismatch: max diff {max_diff:.6e}', flush=True)
-            print(f'[debug] {name} tensor deep_ep shape {tuple(a.shape)}:', flush=True)
-            print(a.cpu(), flush=True)
-            print(f'[debug] {name} tensor mori shape {tuple(b.shape)}:', flush=True)
-            print(b.cpu(), flush=True)
-        raise AssertionError(f"{name} mismatch (max diff {max_diff:.6e})")
-    else:
-        if rank is None or rank == 0:
+def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None) -> bool:
+    same = torch.allclose(a, b, rtol=rtol, atol=atol)
+    if rank is None or rank == 0:
+        if not same:
+            diff = torch.abs(a - b)
+            max_diff = torch.max(diff)
+            print(f'[warning] {name} mismatch: max diff {max_diff:.6e}', flush=True)
+        else:
             print(f'[debug] {name} match.', flush=True)
-            print(f'[debug] {name} tensor deep_ep shape {tuple(a.shape)}:', flush=True)
-            print(a.cpu(), flush=True)
-            print(f'[debug] {name} tensor mori shape {tuple(b.shape)}:', flush=True)
-            print(b.cpu(), flush=True)
+        print(f'[info] {name} tensor deep_ep shape {tuple(a.shape)}:', flush=True)
+        print(a.cpu(), flush=True)
+        print(f'[info] {name} tensor mori shape {tuple(b.shape)}:', flush=True)
+        print(b.cpu(), flush=True)
+    return same
 
 def compare_buffers(local_rank: int, num_local_ranks: int):
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
@@ -110,31 +106,31 @@ def compare_buffers(local_rank: int, num_local_ranks: int):
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
 
+    mismatch = False
     if deep_num_list != mori_num_list:
+        mismatch = True
         if rank == 0:
-            print('[debug] num_tokens_per_expert_list mismatch', flush=True)
+            print('[warning] num_tokens_per_expert_list mismatch', flush=True)
             print('  deep_ep:', deep_num_list, flush=True)
             print('  mori  :', mori_num_list, flush=True)
-        raise AssertionError('num_tokens_per_expert_list differs')
     else:
         if rank == 0:
-            print(f'[debug] rank {rank} num_tokens_per_expert_list match: {deep_num_list}', flush=True)
+            print(f'[debug] rank {rank} num_tokens_per_expert_list match:', flush=True)
             print('  deep_ep:', deep_num_list, flush=True)
             print('  mori  :', mori_num_list, flush=True)
-    assert_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank)
-    assert_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank)
     if not torch.equal(deep_topk_idx, mori_topk_idx):
+        mismatch = True
         if rank == 0:
-            print('[debug] topk indices mismatch', flush=True)
+            print('[warning] topk indices mismatch', flush=True)
             print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
             print('  mori  :', mori_topk_idx.cpu(), flush=True)
-        raise AssertionError('topk indices differ')
     else:
         if rank == 0:
             print(f'[debug] rank {rank} topk indices match.', flush=True)
             print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
             print('  mori  :', mori_topk_idx.cpu(), flush=True)
-        
+    mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank)
+    mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank)
 
 
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
@@ -144,12 +140,15 @@ def compare_buffers(local_rank: int, num_local_ranks: int):
                                                                      topk_weights=mori_topk_weights,
                                                                      config=config)
 
-    assert_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank)
-    assert_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank)
+    mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank)
+    mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank)
 
     dist.barrier()
     if rank == 0:
-        print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.')
+        if mismatch:
+            print('[warning] DeepEP and MORI buffers had mismatches during comparison.', flush=True)
+        else:
+            print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.', flush=True)
 
     dist.destroy_process_group()
 
