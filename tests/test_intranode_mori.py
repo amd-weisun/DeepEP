@@ -74,8 +74,8 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
     # noinspection PyShadowingNames
     def check_data(check_x, rank_prefix_matrix):
         print(f'[debug] check_data on rank {rank} ...', flush=True)
-        print(f'[debug] check_x:', check_x.cpu(), flush=True)
-        print(f'[debug] rank_prefix_matrix:', rank_prefix_matrix.cpu(), flush=True)
+        print(f'[debug] check_x, shape {check_x.shape}:\n', check_x.cpu(), flush=True)
+        print(f'[debug] rank_prefix_matrix: shape {rank_prefix_matrix.shape} \n', rank_prefix_matrix.cpu(), flush=True)
         try:
             assert torch.allclose(check_x.amin(dim=1), check_x.amax(dim=1))
             check_start = 0
