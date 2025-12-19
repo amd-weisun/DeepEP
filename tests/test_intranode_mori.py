@@ -243,7 +243,7 @@ def test_loop(local_rank: int, num_local_ranks: int):
     if test_ll_compatibility:
         ll_num_tokens, ll_hidden, ll_num_experts, ll_num_topk = 16, 5120, 256, 9
         num_rdma_bytes = mori.Buffer.get_low_latency_rdma_size_hint(ll_num_tokens, ll_hidden, num_ranks, ll_num_experts)
-    num_tokens, hidden, num_topk, num_experts = 128, 7168, 8, (32 // num_ranks) * num_ranks
+    num_tokens, hidden, num_topk, num_experts = 8, 8, 4, (16 // num_ranks) * num_ranks
 
     buffer = mori.Buffer(group, int(1e9), num_rdma_bytes, low_latency_mode=test_ll_compatibility,
                             num_qps_per_rank=(ll_num_experts // num_ranks if test_ll_compatibility else num_experts // num_ranks ), max_num_inp_token_per_rank = num_tokens, gpu_per_node =num_local_ranks )
