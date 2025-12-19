@@ -20,7 +20,7 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
 
     # Random data
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=buffer.device) + rank * num_tokens
-    x = row_values.unsqueeze(1).expand(num_tokens, hidden_dim).to(torch.bfloat16)
+    x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     # x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x_e4m3 = per_token_cast_to_fp8(x)
