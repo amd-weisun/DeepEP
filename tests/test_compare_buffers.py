@@ -141,6 +141,26 @@ def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: 
     row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
     return handle[0][row_of_token], handle[1]
 
+
+def mask_mori_topk_by_rank(topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
+    experts_per_rank = max(num_experts // num_ranks, 1)
+    rank_start = rank * experts_per_rank
+    rank_end = rank_start + experts_per_rank
+    local_mask = (topk_idx >= rank_start) & (topk_idx < rank_end)
+    masked = topk_idx.clone()
+    masked[~local_mask] = -1
+    return masked
+
+
+def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
+    experts_per_rank = max(num_experts // num_ranks, 1)
+    rank_start = rank * experts_per_rank
+    rank_end = rank_start + experts_per_rank
+    local_mask = (topk_idx >= rank_start) & (topk_idx < rank_end)
+    masked = topk_weights.clone()
+    masked[~local_mask] = 0
+    return masked
+
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
     per_rank = max((base + num_ranks - 1) // num_ranks, 1)
     return per_rank * num_ranks
@@ -233,6 +253,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             if log_values:
                 print('  deep_ep:', deep_num_list, flush=True)
                 print('  mori  :', mori_num_list, flush=True)
+    mori_topk_idx = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
+    mori_topk_weights = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx, rank, num_experts, num_ranks)
     if not torch.equal(deep_topk_idx, mori_topk_idx):
         mismatch = True
         if rank == 0:
