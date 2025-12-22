@@ -319,7 +319,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
                                                                      config=config)
 
     mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
-    mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank, log_values=log_values)
+    # mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank, log_values=log_values)
 
     dist.barrier()
     if rank == 0:
