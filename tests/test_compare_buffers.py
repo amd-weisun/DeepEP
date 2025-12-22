@@ -177,6 +177,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             if log_values:
                 print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
                 print('  mori  :', mori_topk_idx.cpu(), flush=True)
+    if not torch.equal(deep_handle[0], mori_handle[0]):
+        mismatch = True
+        if rank == 0:
+            print('[warning] rank_prefix_matrix/dispatch_indices mismatch', flush=True)
+            if log_values:
+                print('  deep_ep:', deep_handle[0].cpu(), flush=True)
+                print('  mori  :', mori_handle[0].cpu(), flush=True)
     mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank, log_values=log_values)
 
