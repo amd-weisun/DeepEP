@@ -57,7 +57,7 @@ PRESET_SETTINGS = [
         'hidden': 7168,
         'num_topk': 8,
         'num_experts': 256,
-        'seed': 42,
+        'seed': 47,
         'log_values': False,
         'num_processes': 8,
     },
@@ -345,6 +345,7 @@ def main():
     for setting in PRESET_SETTINGS:
         num_processes = setting.get('num_processes', 2)
         print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
+        print('-------------------------------------------------------', flush=True)
         mp.spawn(compare_buffers, args=(num_processes, setting), nprocs=num_processes)
 
 
