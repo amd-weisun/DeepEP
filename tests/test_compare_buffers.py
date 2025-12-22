@@ -114,7 +114,7 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_outputs guard: shape mismatch or empty order.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
-    if token_order.min() < 0 or token_order.max() >= recv_x.size(0):
+    if token_order.min() < 0 :
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_outputs guard: order contains invalid indices.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
@@ -133,7 +133,7 @@ def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_
         if dist.get_rank() == 0:
             print('[warning] revert_mori_outputs guard: shape mismatch or empty order.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
-    if token_order.min() < 0 or token_order.max() >= recv_x.size(0):
+    if token_order.min() < 0 :
         if dist.get_rank() == 0:
             print('[warning] revert_mori_outputs guard: order contains invalid indices.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
@@ -152,7 +152,7 @@ def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: 
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_handle guard: shape mismatch or empty order.', flush=True)
         return handle
-    if token_order.min() < 0 or token_order.max() >= handle[0].size(0):
+    if token_order.min() < 0:
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_handle guard: order contains invalid indices.', flush=True)
         return handle
