@@ -344,9 +344,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 def main():
     for setting in PRESET_SETTINGS:
         num_processes = setting.get('num_processes', 2)
+        print('-------------------------------------------------------------------------', flush=True)
         print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
-        print('-------------------------------------------------------', flush=True)
+        
         mp.spawn(compare_buffers, args=(num_processes, setting), nprocs=num_processes)
+        print('*************************************************************************', flush=True)
 
 
 if __name__ == '__main__':
