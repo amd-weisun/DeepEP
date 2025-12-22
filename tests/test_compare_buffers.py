@@ -254,11 +254,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
-    mori_recv_x, mori_topk_idx, mori_topk_weights = reorder_mori_outputs(
-        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
+
+    # mori_recv_x, mori_topk_idx, mori_topk_weights = reorder_mori_outputs(
+    #     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
+
     if rank== 0 and log_values:
         print('mori dispatch indices:', mori_handle[0].cpu(), flush=True)
-    # mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
+
 
     # if rank== 0 and log_values:
     #     print('reordered mori dispatch indices:', mori_handle[0].cpu(), flush=True)
@@ -300,8 +302,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
                 print('  mori  :', mori_topk_idx.cpu(), flush=True)
     mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank, log_values=log_values)
-    mori_recv_x, mori_topk_idx, mori_topk_weights = revert_mori_outputs(
-        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
+    # mori_recv_x, mori_topk_idx, mori_topk_weights = revert_mori_outputs(
+    #     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
     torch.cuda.synchronize()
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
                                                                     topk_weights=deep_topk_weights,
