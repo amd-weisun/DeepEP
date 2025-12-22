@@ -283,8 +283,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             if log_values:
                 print('  deep_ep:', deep_num_list, flush=True)
                 print('  mori  :', mori_num_list, flush=True)
-    mori_topk_idx = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
-    mori_topk_weights = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx, rank, num_experts, num_ranks)
+    # mori_topk_idx = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
+    # mori_topk_weights = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx, rank, num_experts, num_ranks)
     if not torch.equal(deep_topk_idx, mori_topk_idx):
         mismatch = True
         if rank == 0:
