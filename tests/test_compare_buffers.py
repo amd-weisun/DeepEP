@@ -119,7 +119,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * rank
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 1.0)
 
     num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
         topk_idx, num_experts, num_ranks, num_tokens)
@@ -149,9 +149,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
-    if rank == 0:
-        if log_values:
-            print('topk_weights:', topk_weights.cpu(), flush=True)
+    
+    if log_values:
+        print(f'rank [{rank}] topk_weights:', topk_weights.cpu(), flush=True)
     mismatch = False
     if deep_num_list != mori_num_list:
         mismatch = True
