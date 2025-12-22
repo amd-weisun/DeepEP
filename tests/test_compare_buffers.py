@@ -11,16 +11,16 @@ from utils import init_dist, inplace_unique
 NUM_SMs = 8
 
 PRESET_SETTINGS = [
-    {
-        'name': 'baseline',
-        'num_tokens': 8,
-        'hidden': 8,
-        'num_topk': 4,
-        'num_experts': 16,
-        'seed': 0,
-        'log_values': True,
-        'num_processes': 2,
-    },
+    # {
+    #     'name': 'baseline',
+    #     'num_tokens': 8,
+    #     'hidden': 8,
+    #     'num_topk': 4,
+    #     'num_experts': 16,
+    #     'seed': 0,
+    #     'log_values': True,
+    #     'num_processes': 2,
+    # },
     {
         'name': 'baseline_2',
         'num_tokens': 16,
@@ -31,26 +31,26 @@ PRESET_SETTINGS = [
         'log_values': True,
         'num_processes': 2,
     },
-    {
-        'name': 'setting_1',
-        'num_tokens': 128,
-        'hidden': 4096,
-        'num_topk': 8,
-        'num_experts': 64,
-        'seed': 17,
-        'log_values': False,
-        'num_processes': 4,
-    },
-    {
-        'name': 'setting_2',
-        'num_tokens': 128,
-        'hidden': 7168,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 42,
-        'log_values': False,
-        'num_processes': 8,
-    },
+    # {
+    #     'name': 'setting_1',
+    #     'num_tokens': 128,
+    #     'hidden': 4096,
+    #     'num_topk': 8,
+    #     'num_experts': 64,
+    #     'seed': 17,
+    #     'log_values': False,
+    #     'num_processes': 4,
+    # },
+    # {
+    #     'name': 'setting_2',
+    #     'num_tokens': 128,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'num_processes': 8,
+    # },
 ]
 
 
@@ -111,14 +111,17 @@ def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-
 def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
                          token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if token_order.numel() == 0 or recv_x.size(0) != token_order.numel():
-        print('[warning] reorder_mori_outputs guard: shape mismatch or empty order.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] reorder_mori_outputs guard: shape mismatch or empty order.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
     if token_order.min() < 0 or token_order.max() >= recv_x.size(0):
-        print('[warning] reorder_mori_outputs guard: order contains invalid indices.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] reorder_mori_outputs guard: order contains invalid indices.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
     unique_tokens = torch.unique(token_order)
     if unique_tokens.numel() != token_order.numel():
-        print('[warning] reorder_mori_outputs guard: order contains repeated tokens.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] reorder_mori_outputs guard: order contains repeated tokens.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
     row_of_token = torch.full((token_order.numel(),), -1, dtype=torch.long, device=token_order.device)
     row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
@@ -128,14 +131,17 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
 def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
                          token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if token_order.numel() == 0 or recv_x.size(0) != token_order.numel():
-        print('[warning] revert_mori_outputs guard: shape mismatch or empty order.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] revert_mori_outputs guard: shape mismatch or empty order.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
     if token_order.min() < 0 or token_order.max() >= recv_x.size(0):
-        print('[warning] revert_mori_outputs guard: order contains invalid indices.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] revert_mori_outputs guard: order contains invalid indices.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
     unique_tokens = torch.unique(token_order)
     if unique_tokens.numel() != token_order.numel():
-        print('[warning] revert_mori_outputs guard: order contains repeated tokens.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] revert_mori_outputs guard: order contains repeated tokens.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
     original_x = torch.empty_like(recv_x)
     original_idx = torch.empty_like(recv_topk_idx)
@@ -147,14 +153,17 @@ def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_
 
 def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     if token_order.numel() == 0 or handle[0].size(0) != token_order.numel():
-        print('[warning] reorder_mori_handle guard: shape mismatch or empty order.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] reorder_mori_handle guard: shape mismatch or empty order.', flush=True)
         return handle
     if token_order.min() < 0 or token_order.max() >= handle[0].size(0):
-        print('[warning] reorder_mori_handle guard: order contains invalid indices.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] reorder_mori_handle guard: order contains invalid indices.', flush=True)
         return handle
     unique_tokens = torch.unique(token_order)
     if unique_tokens.numel() != token_order.numel():
-        print('[warning] reorder_mori_handle guard: order contains repeated tokens.', flush=True)
+        if dist.get_rank() == 0:
+            print('[warning] reorder_mori_handle guard: order contains repeated tokens.', flush=True)
         return handle
     row_of_token = torch.full((token_order.numel(),), -1, dtype=torch.long, device=token_order.device)
     row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
