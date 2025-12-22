@@ -28,7 +28,7 @@ PRESET_SETTINGS = [
         'num_topk': 8,
         'num_experts': 32,
         'seed': 0,
-        'log_values': False,
+        'log_values': True,
         'num_processes': 2,
     },
     {
@@ -203,7 +203,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     row_values = row_values + rank * num_tokens
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    x = x_pure_rand
+    # x = x_pure_rand
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank * 0.1)
@@ -284,7 +284,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank, log_values=log_values)
     mori_recv_x, mori_topk_idx, mori_topk_weights = revert_mori_outputs(
         mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
-
+    torch.cuda.synchronize()
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
                                                                     topk_weights=deep_topk_weights,
                                                                     config=config)
