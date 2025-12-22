@@ -111,6 +111,18 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
     row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
     return recv_x[row_of_token], recv_topk_idx[row_of_token], recv_topk_weights[row_of_token]
 
+def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    if token_order.numel() == 0 or handle[0].size(0) != token_order.numel():
+        return handle
+    if token_order.min() < 0 or token_order.max() >= handle[0].size(0):
+        return handle
+    unique_tokens = torch.unique(token_order)
+    if unique_tokens.numel() != token_order.numel():
+        return handle
+    row_of_token = torch.full((token_order.numel(),), -1, dtype=torch.long, device=token_order.device)
+    row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
+    return handle[0][row_of_token], handle[1]
+
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
     per_rank = max((base + num_ranks - 1) // num_ranks, 1)
     return per_rank * num_ranks
@@ -176,12 +188,20 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights = reorder_mori_outputs(
         mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
+    if rank== 0 and log_values:
+        print('mori dispatch indices:', mori_handle[0].cpu(), flush=True)
+    mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
+
+    if rank== 0 and log_values:
+        print('reordered mori dispatch indices:', mori_handle[0].cpu(), flush=True)
     mismatch = False
     if rank== 0 and log_values:
         print('mori_token_order:', mori_token_order.cpu(), flush=True)
 
     if rank== 0 and log_values:
         print('mori src_token_pos:', mori_handle[1].cpu(), flush=True)
+
+
     if deep_num_list != mori_num_list:
         mismatch = True
         if rank == 0:
