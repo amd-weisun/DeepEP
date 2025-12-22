@@ -175,7 +175,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights = reorder_mori_outputs(
-        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_token_order)
+        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
     mismatch = False
     if rank== 0 and log_values:
         print('mori_token_order:', mori_token_order.cpu(), flush=True)
