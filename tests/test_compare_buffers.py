@@ -111,6 +111,24 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
     row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
     return recv_x[row_of_token], recv_topk_idx[row_of_token], recv_topk_weights[row_of_token]
 
+
+def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
+                         token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if token_order.numel() == 0 or recv_x.size(0) != token_order.numel():
+        return recv_x, recv_topk_idx, recv_topk_weights
+    if token_order.min() < 0 or token_order.max() >= recv_x.size(0):
+        return recv_x, recv_topk_idx, recv_topk_weights
+    unique_tokens = torch.unique(token_order)
+    if unique_tokens.numel() != token_order.numel():
+        return recv_x, recv_topk_idx, recv_topk_weights
+    original_x = torch.empty_like(recv_x)
+    original_idx = torch.empty_like(recv_topk_idx)
+    original_weights = torch.empty_like(recv_topk_weights)
+    original_x[token_order] = recv_x
+    original_idx[token_order] = recv_topk_idx
+    original_weights[token_order] = recv_topk_weights
+    return original_x, original_idx, original_weights
+
 def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     if token_order.numel() == 0 or handle[0].size(0) != token_order.numel():
         return handle
@@ -230,7 +248,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
                 print('  mori  :', mori_topk_idx.cpu(), flush=True)
     mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank, log_values=log_values)
-
+    mori_recv_x, mori_topk_idx, mori_topk_weights = revert_mori_outputs(
+        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
 
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
                                                                     topk_weights=deep_topk_weights,
