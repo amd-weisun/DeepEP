@@ -123,9 +123,7 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_outputs guard: order contains repeated tokens.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
-    row_of_token = torch.full((token_order.numel(),), -1, dtype=torch.long, device=token_order.device)
-    row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
-    return recv_x[row_of_token], recv_topk_idx[row_of_token], recv_topk_weights[row_of_token]
+    return recv_x[token_order], recv_topk_idx[token_order], recv_topk_weights[token_order]
 
 
 def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
@@ -165,9 +163,7 @@ def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: 
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_handle guard: order contains repeated tokens.', flush=True)
         return handle
-    row_of_token = torch.full((token_order.numel(),), -1, dtype=torch.long, device=token_order.device)
-    row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
-    return handle[0][row_of_token], handle[1]
+    return handle[0][token_order], handle[1]
 
 
 def mask_mori_topk_by_rank(topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
