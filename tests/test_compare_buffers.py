@@ -149,9 +149,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
-    
+    src_token_pos = mori_handle[0]
     if log_values:
-        print(f'rank [{rank}] topk_weights:', topk_weights.cpu(), flush=True)
+        print(f'rank [{rank}] topk_weights:\n', topk_weights.cpu(), flush=True)
+    if log_values:
+        print(f'rank [{rank}] mori src_token_pos:\n', src_token_pos.cpu(), flush=True)
     mismatch = False
     if deep_num_list != mori_num_list:
         mismatch = True
