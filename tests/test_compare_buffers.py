@@ -102,7 +102,12 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
                          token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if token_order.numel() == 0 or recv_x.size(0) != token_order.numel():
         return recv_x, recv_topk_idx, recv_topk_weights
-    row_of_token = torch.empty_like(token_order)
+    if token_order.min() < 0 or token_order.max() >= recv_x.size(0):
+        return recv_x, recv_topk_idx, recv_topk_weights
+    unique_tokens = torch.unique(token_order)
+    if unique_tokens.numel() != token_order.numel():
+        return recv_x, recv_topk_idx, recv_topk_weights
+    row_of_token = torch.full((token_order.numel(),), -1, dtype=torch.long, device=token_order.device)
     row_of_token[token_order] = torch.arange(token_order.numel(), device=token_order.device)
     return recv_x[row_of_token], recv_topk_idx[row_of_token], recv_topk_weights[row_of_token]
 
