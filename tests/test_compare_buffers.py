@@ -11,16 +11,16 @@ from utils import init_dist, inplace_unique
 NUM_SMs = 8
 
 PRESET_SETTINGS = [
-    # {
-    #     'name': 'baseline',
-    #     'num_tokens': 8,
-    #     'hidden': 8,
-    #     'num_topk': 4,
-    #     'num_experts': 16,
-    #     'seed': 0,
-    #     'log_values': True,
-    #     'num_processes': 2,
-    # },
+    {
+        'name': 'baseline',
+        'num_tokens': 8,
+        'hidden': 8,
+        'num_topk': 4,
+        'num_experts': 16,
+        'seed': 0,
+        'log_values': False,
+        'num_processes': 2,
+    },
     {
         'name': 'baseline_2',
         'num_tokens': 16,
@@ -28,29 +28,29 @@ PRESET_SETTINGS = [
         'num_topk': 8,
         'num_experts': 32,
         'seed': 0,
-        'log_values': True,
+        'log_values': False,
         'num_processes': 2,
     },
-    # {
-    #     'name': 'setting_1',
-    #     'num_tokens': 128,
-    #     'hidden': 4096,
-    #     'num_topk': 8,
-    #     'num_experts': 64,
-    #     'seed': 17,
-    #     'log_values': False,
-    #     'num_processes': 4,
-    # },
-    # {
-    #     'name': 'setting_2',
-    #     'num_tokens': 128,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 42,
-    #     'log_values': False,
-    #     'num_processes': 8,
-    # },
+    {
+        'name': 'setting_1',
+        'num_tokens': 128,
+        'hidden': 4096,
+        'num_topk': 8,
+        'num_experts': 64,
+        'seed': 17,
+        'log_values': False,
+        'num_processes': 4,
+    },
+    {
+        'name': 'setting_2',
+        'num_tokens': 128,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
 ]
 
 
