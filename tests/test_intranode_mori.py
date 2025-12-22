@@ -10,12 +10,12 @@ from utils import init_dist, bench, calc_diff, inplace_unique, per_token_cast_to
 # Test compatibility with low latency functions
 import test_low_latency
 
-num_tokens, hidden, num_topk, num_experts = 128, 4096, 8, (64 // num_ranks) * num_ranks
+
 
 
 def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: mori.Buffer, group: dist.ProcessGroup):
     # Settings
-    
+    num_tokens, hidden, num_topk, num_experts = 128, 4096, 8, (64 // num_ranks) * num_ranks
     assert num_experts % num_ranks == 0
     if local_rank == 0:
         print(f'[config] num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}', flush=True)
@@ -250,7 +250,7 @@ def test_loop(local_rank: int, num_local_ranks: int):
     if test_ll_compatibility:
         ll_num_tokens, ll_hidden, ll_num_experts, ll_num_topk = 16, 5120, 256, 9
         num_rdma_bytes = mori.Buffer.get_low_latency_rdma_size_hint(ll_num_tokens, ll_hidden, num_ranks, ll_num_experts)
-
+    num_tokens, hidden, num_topk, num_experts = 128, 4096, 8, (64 // num_ranks) * num_ranks
     buffer = mori.Buffer(group, int(1e9), num_rdma_bytes, low_latency_mode=test_ll_compatibility,
                             num_qps_per_rank=(ll_num_experts // num_ranks if test_ll_compatibility else num_experts // num_ranks ), max_num_inp_token_per_rank = num_tokens, num_experts_per_token = num_topk , gpu_per_node =num_local_ranks )
     torch.manual_seed(rank)
