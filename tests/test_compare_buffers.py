@@ -123,7 +123,8 @@ def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_outputs guard: order contains repeated tokens.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
-    return recv_x[token_order], recv_topk_idx[token_order], recv_topk_weights[token_order]
+    perm = torch.argsort(token_order)
+    return recv_x[perm], recv_topk_idx[perm], recv_topk_weights[perm]
 
 
 def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
@@ -141,13 +142,10 @@ def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_
         if dist.get_rank() == 0:
             print('[warning] revert_mori_outputs guard: order contains repeated tokens.', flush=True)
         return recv_x, recv_topk_idx, recv_topk_weights
-    original_x = torch.empty_like(recv_x)
-    original_idx = torch.empty_like(recv_topk_idx)
-    original_weights = torch.empty_like(recv_topk_weights)
-    original_x[token_order] = recv_x
-    original_idx[token_order] = recv_topk_idx
-    original_weights[token_order] = recv_topk_weights
-    return original_x, original_idx, original_weights
+    perm = torch.argsort(token_order)
+    inverted = torch.empty_like(perm)
+    inverted[perm] = torch.arange(perm.numel(), device=perm.device)
+    return recv_x[inverted], recv_topk_idx[inverted], recv_topk_weights[inverted]
 
 def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     if token_order.numel() == 0 or handle[0].size(0) != token_order.numel():
@@ -163,7 +161,8 @@ def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: 
         if dist.get_rank() == 0:
             print('[warning] reorder_mori_handle guard: order contains repeated tokens.', flush=True)
         return handle
-    return handle[0][token_order], handle[1]
+    perm = torch.argsort(token_order)
+    return handle[0][perm], handle[1]
 
 
 def mask_mori_topk_by_rank(topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
