@@ -258,7 +258,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
         mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
     if rank== 0 and log_values:
         print('mori dispatch indices:', mori_handle[0].cpu(), flush=True)
-    # mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
+    mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
 
     # if rank== 0 and log_values:
     #     print('reordered mori dispatch indices:', mori_handle[0].cpu(), flush=True)
