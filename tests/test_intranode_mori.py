@@ -10,10 +10,12 @@ from utils import init_dist, bench, calc_diff, inplace_unique, per_token_cast_to
 # Test compatibility with low latency functions
 import test_low_latency
 
+num_tokens, hidden, num_topk, num_experts = 128, 4096, 8, (64 // num_ranks) * num_ranks
+
 
 def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: mori.Buffer, group: dist.ProcessGroup):
     # Settings
-    num_tokens, hidden, num_topk, num_experts = 8, 8, 4, (16 // num_ranks) * num_ranks
+    
     assert num_experts % num_ranks == 0
     if local_rank == 0:
         print(f'[config] num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}', flush=True)
@@ -95,11 +97,11 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
 
     for previous_mode in (False, ):
         for async_mode in (False,):
-            for current_x in ( x,  ):
+            for current_x in ( x, x_pure_rand):
                 for with_topk in (True, ): # 
                     if local_rank == 0:
                         print(f'[testing] Running with {"FP8" if isinstance(current_x, tuple) else "BF16"}, {"with" if with_topk else "without"} top-k (async={async_mode}, previous={previous_mode}) ...', flush=True, end='')
-                        print(f'current_x.shape {current_x.shape if not isinstance(current_x, tuple) else (current_x[0].shape)}, topk_idx shape {topk_idx.shape if with_topk else "N/A"}, num_tokens_per_expert {num_tokens_per_expert} ', flush=True, end='')
+                        print(f'current_x.shape {current_x.shape if not isinstance(current_x, tuple) else (current_x[0].shape)}, topk_idx shape {topk_idx.shape if with_topk else "N/A"}', flush=True, end='')
                     dispatch_args = {'x': current_x, 'num_tokens_per_rank': num_tokens_per_rank,  'is_token_in_rank': is_token_in_rank,
                                      'num_tokens_per_expert': num_tokens_per_expert, 'config': config, 'async_finish': async_mode}                    
                     if with_topk:
@@ -248,7 +250,6 @@ def test_loop(local_rank: int, num_local_ranks: int):
     if test_ll_compatibility:
         ll_num_tokens, ll_hidden, ll_num_experts, ll_num_topk = 16, 5120, 256, 9
         num_rdma_bytes = mori.Buffer.get_low_latency_rdma_size_hint(ll_num_tokens, ll_hidden, num_ranks, ll_num_experts)
-    num_tokens, hidden, num_topk, num_experts = 8, 8, 4, (16 // num_ranks) * num_ranks
 
     buffer = mori.Buffer(group, int(1e9), num_rdma_bytes, low_latency_mode=test_ll_compatibility,
                             num_qps_per_rank=(ll_num_experts // num_ranks if test_ll_compatibility else num_experts // num_ranks ), max_num_inp_token_per_rank = num_tokens, num_experts_per_token = num_topk , gpu_per_node =num_local_ranks )
