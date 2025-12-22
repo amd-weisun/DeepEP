@@ -312,13 +312,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
     # mori_recv_x_reverted, mori_topk_idx_reverted, mori_topk_weights_reverted = revert_mori_outputs(
     #     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
-    if rank == 0:
-        if not torch.equal(mori_recv_x_reverted, mori_recv_x_orig):
-            print('[warning] reverted recv_x deviates from original order', flush=True)
-        if not torch.equal(mori_topk_idx_reverted, mori_topk_idx_orig):
-            print('[warning] reverted topk_idx deviates from original order', flush=True)
-        if not torch.equal(mori_topk_weights_reverted, mori_topk_weights_orig):
-            print('[warning] reverted topk_weights deviates from original order', flush=True)
+    # if rank == 0:
+    #     if not torch.equal(mori_recv_x_reverted, mori_recv_x_orig):
+    #         print('[warning] reverted recv_x deviates from original order', flush=True)
+    #     if not torch.equal(mori_topk_idx_reverted, mori_topk_idx_orig):
+    #         print('[warning] reverted topk_idx deviates from original order', flush=True)
+    #     if not torch.equal(mori_topk_weights_reverted, mori_topk_weights_orig):
+    #         print('[warning] reverted topk_weights deviates from original order', flush=True)
     # mori_recv_x, mori_topk_idx, mori_topk_weights = mori_recv_x_reverted, mori_topk_idx_reverted, mori_topk_weights_reverted
     # mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
 
