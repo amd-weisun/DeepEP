@@ -18,7 +18,7 @@ PRESET_SETTINGS = [
         'num_topk': 4,
         'num_experts': 16,
         'seed': 0,
-        'log_values': False,
+        'log_values': True,
         'num_processes': 2,
     },
     {
@@ -28,7 +28,7 @@ PRESET_SETTINGS = [
         'num_topk': 8,
         'num_experts': 32,
         'seed': 0,
-        'log_values': True,
+        'log_values': False,
         'num_processes': 2,
     },
     {
