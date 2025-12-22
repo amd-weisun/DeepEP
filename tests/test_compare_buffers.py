@@ -8,11 +8,40 @@ import deep_ep
 from utils import init_dist, inplace_unique
 
 
-NUM_TOKENS = 8
-HIDDEN = 8
-NUM_TOPK = 4
-NVL_BUFFER_SIZE = 256
-NUM_SAMPLES = 8
+NUM_SMs = 8
+
+PRESET_SETTINGS = [
+    {
+        'name': 'baseline',
+        'num_tokens': 8,
+        'hidden': 8,
+        'num_topk': 4,
+        'num_experts': 16,
+        'seed': 0,
+        'log_values': True,
+        'num_processes': 2,
+    },
+    {
+        'name': 'setting_1',
+        'num_tokens': 128,
+        'hidden': 4096,
+        'num_topk': 8,
+        'num_experts': 64,
+        'seed': 17,
+        'log_values': False,
+        'num_processes': 4,
+    },
+    {
+        'name': 'setting_2',
+        'num_tokens': 128,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
+]
 
 
 def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: int, num_tokens: int):
@@ -39,7 +68,7 @@ def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: i
     return num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank
 
 
-def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None) -> bool:
+def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
     same = torch.allclose(a, b, rtol=rtol, atol=atol)
     if rank is None or rank == 0:
         if not same:
@@ -48,39 +77,54 @@ def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-
             print(f'[warning] {name} mismatch: max diff {max_diff:.6e}', flush=True)
         else:
             print(f'[debug] {name} match.', flush=True)
-        print(f'[info] {name} tensor deep_ep shape {tuple(a.shape)}:', flush=True)
-        print(a.cpu(), flush=True)
-        print(f'[info] {name} tensor mori shape {tuple(b.shape)}:', flush=True)
-        print(b.cpu(), flush=True)
+        print(f'[info] {name} tensor deep_ep shape {tuple(a.shape)}', flush=True)
+        print(f'[info] {name} tensor mori shape {tuple(b.shape)}', flush=True)
+        if log_values:
+            print(a.cpu(), flush=True)
+            print(b.cpu(), flush=True)
+        else:
+            print(f'[info] {name} tensor values suppressed (log_values False).', flush=True)
     return same
 
-def compare_buffers(local_rank: int, num_local_ranks: int):
-    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
-    num_experts = (16 // num_ranks) * num_ranks
+def _round_up_num_experts(base: int, num_ranks: int) -> int:
+    per_rank = max((base + num_ranks - 1) // num_ranks, 1)
+    return per_rank * num_ranks
 
-    buffer_deep = deep_ep.Buffer(group, int(1e9), 0, low_latency_mode=False,
+
+def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
+    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
+    num_experts = _round_up_num_experts(setting['num_experts'], num_ranks)
+    num_tokens = setting['num_tokens']
+    hidden = setting['hidden']
+    num_topk = setting['num_topk']
+    log_values = setting.get('log_values', True)
+
+    if rank == 0:
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
+
+    buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
                                  num_qps_per_rank=num_experts // num_ranks)
-    buffer_mori = mori.Buffer(group, int(1e9), 0, low_latency_mode=False,
+    buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
                               num_qps_per_rank=num_experts // num_ranks,
-                              max_num_inp_token_per_rank=NUM_TOKENS,
-                              num_experts_per_token=NUM_TOPK,
+                              max_num_inp_token_per_rank=num_tokens,
+                              num_experts_per_token=num_topk,
                               gpu_per_node=num_local_ranks)
 
-    torch.manual_seed(0)
-    torch.cuda.manual_seed_all(0)
+    torch.manual_seed(setting.get('seed', 0))
+    torch.cuda.manual_seed_all(setting.get('seed', 0))
 
     device = torch.device('cuda', torch.cuda.current_device())
-    row_values = torch.arange(NUM_TOKENS, dtype=torch.float32, device=device)
-    row_values = row_values + rank * NUM_TOKENS
-    x = row_values.unsqueeze(1).expand(NUM_TOKENS, HIDDEN).to(torch.bfloat16)
-    scores = torch.randn((NUM_TOKENS, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-    topk_idx = torch.topk(scores, NUM_TOPK, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.ones((NUM_TOKENS, NUM_TOPK), dtype=torch.float32, device='cuda') * rank
+    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
+    row_values = row_values + rank * num_tokens
+    x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
+    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * rank
 
     num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
-        topk_idx, num_experts, num_ranks, NUM_TOKENS)
-
-    config = deep_ep.Config(NUM_SAMPLES, 8, NVL_BUFFER_SIZE)
+        topk_idx, num_experts, num_ranks, num_tokens)
+    rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
+    config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
     dispatch_args = {
         'x': x,
@@ -111,26 +155,30 @@ def compare_buffers(local_rank: int, num_local_ranks: int):
         mismatch = True
         if rank == 0:
             print('[warning] num_tokens_per_expert_list mismatch', flush=True)
-            print('  deep_ep:', deep_num_list, flush=True)
-            print('  mori  :', mori_num_list, flush=True)
+            if log_values:
+                print('  deep_ep:', deep_num_list, flush=True)
+                print('  mori  :', mori_num_list, flush=True)
     else:
         if rank == 0:
             print(f'[debug] rank {rank} num_tokens_per_expert_list match:', flush=True)
-            print('  deep_ep:', deep_num_list, flush=True)
-            print('  mori  :', mori_num_list, flush=True)
+            if log_values:
+                print('  deep_ep:', deep_num_list, flush=True)
+                print('  mori  :', mori_num_list, flush=True)
     if not torch.equal(deep_topk_idx, mori_topk_idx):
         mismatch = True
         if rank == 0:
             print('[warning] topk indices mismatch', flush=True)
-            print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
-            print('  mori  :', mori_topk_idx.cpu(), flush=True)
+            if log_values:
+                print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+                print('  mori  :', mori_topk_idx.cpu(), flush=True)
     else:
         if rank == 0:
             print(f'[debug] rank {rank} topk indices match.', flush=True)
-            print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
-            print('  mori  :', mori_topk_idx.cpu(), flush=True)
-    mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank)
-    mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank)
+            if log_values:
+                print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+                print('  mori  :', mori_topk_idx.cpu(), flush=True)
+    mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
+    mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights, rank=rank, log_values=log_values)
 
 
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
@@ -140,8 +188,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int):
                                                                      topk_weights=mori_topk_weights,
                                                                      config=config)
 
-    mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank)
-    mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank)
+    mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
+    mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank, log_values=log_values)
 
     dist.barrier()
     if rank == 0:
@@ -154,8 +202,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int):
 
 
 def main():
-    num_processes = 2
-    mp.spawn(compare_buffers, args=(num_processes,), nprocs=num_processes)
+    for setting in PRESET_SETTINGS:
+        num_processes = setting.get('num_processes', 2)
+        print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
+        mp.spawn(compare_buffers, args=(num_processes, setting), nprocs=num_processes)
 
 
 if __name__ == '__main__':
