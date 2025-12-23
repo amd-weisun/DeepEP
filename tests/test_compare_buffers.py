@@ -5,7 +5,7 @@ from typing import Optional
 
 import mori
 import deep_ep
-from utils import init_dist, inplace_unique
+from utils import init_dist, inplace_unique, per_token_cast_to_fp8, per_token_cast_back
 
 
 NUM_SMs = 8
@@ -227,6 +227,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x = x_pure_rand
+    x_e4m3 = per_token_cast_to_fp8(x)
+    x = x_e4m3
+
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 1.0)
