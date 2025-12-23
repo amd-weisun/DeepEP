@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -98,30 +99,35 @@ def _round_up_num_experts(base: int, num_ranks: int) -> int:
     return per_rank * num_ranks
 
 
-def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
+def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_path: str):
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
     num_experts = _round_up_num_experts(setting['num_experts'], num_ranks)
     num_tokens = setting['num_tokens']
     hidden = setting['hidden']
     num_topk = setting['num_topk']
     log_values = setting.get('log_values', True)
+    run_deep = run_path in ('deep', 'both')
+    run_mori = run_path in ('mori', 'both')
 
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
 
 
-    num_rdma_bytes = deep_ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
-    if local_rank == 0:
-        print(f'Allocating buffer size: {num_rdma_bytes / 1e6} MB ...', flush=True)
+    buffer_deep = None
+    if run_deep:
+        num_rdma_bytes = deep_ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
+        if local_rank == 0:
+            print(f'Allocating buffer size: {num_rdma_bytes / 1e6} MB ...', flush=True)
+        buffer_deep = deep_ep.Buffer(group, num_rdma_bytes=num_rdma_bytes, low_latency_mode=True,
+                                     num_qps_per_rank=num_experts // num_ranks)
 
-    buffer_deep = deep_ep.Buffer(group, num_rdma_bytes=num_rdma_bytes, low_latency_mode=True,
-                            num_qps_per_rank=num_experts // num_ranks)
-
-    buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=True,
-                              num_qps_per_rank=num_experts // num_ranks,
-                              max_num_inp_token_per_rank=num_tokens,
-                              num_experts_per_token=num_topk,
-                              gpu_per_node=num_local_ranks)
+    buffer_mori = None
+    if run_mori:
+        buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=True,
+                                  num_qps_per_rank=num_experts // num_ranks,
+                                  max_num_inp_token_per_rank=num_tokens,
+                                  num_experts_per_token=num_topk,
+                                  gpu_per_node=num_local_ranks)
 
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
@@ -138,72 +144,93 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     use_fp8 = False
     
     # DeepEP
-    deep_packed_recv_x, deep_packed_recv_count, deep_handle, deep_event, deep_hook = \
-        buffer_deep.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
-                                         use_fp8=use_fp8, async_finish=False)
+    deep_packed_recv_x = deep_packed_recv_count = deep_handle = None
+    if run_deep:
+        deep_packed_recv_x, deep_packed_recv_count, deep_handle, deep_event, deep_hook = \
+            buffer_deep.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
+                                             use_fp8=use_fp8, async_finish=False)
     
     # Mori
-    mori_packed_recv_x, mori_packed_recv_count, mori_handle, mori_event, mori_hook = \
-        buffer_mori.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
-                                         use_fp8=use_fp8, async_finish=False)
+    mori_packed_recv_x = mori_packed_recv_count = mori_handle = None
+    if run_mori:
+        mori_packed_recv_x, mori_packed_recv_count, mori_handle, mori_event, mori_hook = \
+            buffer_mori.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
+                                             use_fp8=use_fp8, async_finish=False)
 
     mismatch = False
     
-    # Compare counts
-    mismatch |= not warn_allclose('packed_recv_count', deep_packed_recv_count, mori_packed_recv_count, rank=rank, log_values=log_values)
+    if run_deep and run_mori:
+        # Compare counts
+        mismatch |= not warn_allclose('packed_recv_count', deep_packed_recv_count, mori_packed_recv_count, rank=rank, log_values=log_values)
 
-    # Compare received data (sorted)
-    num_local_experts = deep_packed_recv_count.size(0)
-    for i in range(num_local_experts):
-        count = deep_packed_recv_count[i].item()
-        if count > 0:
-            deep_data = deep_packed_recv_x[i, :count]
-            mori_data = mori_packed_recv_x[i, :count]
-            
-            # Sort for comparison
-            deep_idx = torch.argsort(deep_data[:, 0])
-            mori_idx = torch.argsort(mori_data[:, 0])
-            
-            deep_data_sorted = deep_data[deep_idx]
-            mori_data_sorted = mori_data[mori_idx]
-            
-            if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-5):
-                if rank == 0:
-                    print(f"[warning] recv_x mismatch at expert {i}", flush=True)
-                    diff = (deep_data_sorted - mori_data_sorted).abs().max()
-                    print(f"  max diff: {diff}", flush=True)
-                mismatch = True
+        # Compare received data (sorted)
+        num_local_experts = deep_packed_recv_count.size(0)
+        for i in range(num_local_experts):
+            count = deep_packed_recv_count[i].item()
+            if count > 0:
+                deep_data = deep_packed_recv_x[i, :count]
+                mori_data = mori_packed_recv_x[i, :count]
+                
+                # Sort for comparison
+                deep_idx = torch.argsort(deep_data[:, 0])
+                mori_idx = torch.argsort(mori_data[:, 0])
+                
+                deep_data_sorted = deep_data[deep_idx]
+                mori_data_sorted = mori_data[mori_idx]
+                
+                if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-5):
+                    if rank == 0:
+                        print(f"[warning] recv_x mismatch at expert {i}", flush=True)
+                        diff = (deep_data_sorted - mori_data_sorted).abs().max()
+                        print(f"  max diff: {diff}", flush=True)
+                    mismatch = True
+    elif rank == 0:
+        print(f"[info] skipping cross-buffer dispatch comparison (path={run_path}).", flush=True)
 
     # Low Latency Combine
     # Use identity as GEMM
-    deep_sim_gemm_x = deep_packed_recv_x.clone()
-    mori_sim_gemm_x = mori_packed_recv_x.clone()
+    deep_combined_x = None
+    if run_deep:
+        deep_sim_gemm_x = deep_packed_recv_x.clone()
+        deep_combined_x, deep_combine_event, deep_combine_hook = \
+            buffer_deep.low_latency_combine(deep_sim_gemm_x, topk_idx, topk_weights, deep_handle, async_finish=False)
     
-    deep_combined_x, deep_combine_event, deep_combine_hook = \
-        buffer_deep.low_latency_combine(deep_sim_gemm_x, topk_idx, topk_weights, deep_handle, async_finish=False)
+    mori_combined_x = None
+    if run_mori:
+        mori_sim_gemm_x = mori_packed_recv_x.clone()
+        mori_combined_x, mori_combine_event, mori_combine_hook = \
+            buffer_mori.low_latency_combine(mori_sim_gemm_x, topk_idx, topk_weights, mori_handle, async_finish=False)
         
-    mori_combined_x, mori_combine_event, mori_combine_hook = \
-        buffer_mori.low_latency_combine(mori_sim_gemm_x, topk_idx, topk_weights, mori_handle, async_finish=False)
-        
-    mismatch |= not warn_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
+    if run_deep and run_mori:
+        mismatch |= not warn_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
+    elif rank == 0:
+        print(f"[info] skipping cross-buffer combine comparison (path={run_path}).", flush=True)
 
     dist.barrier()
     if rank == 0:
-        if mismatch:
-            print('[warning] DeepEP and MORI buffers had mismatches during comparison.', flush=True)
+        if run_deep and run_mori:
+            if mismatch:
+                print('[warning] DeepEP and MORI buffers had mismatches during comparison.', flush=True)
+            else:
+                print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.', flush=True)
         else:
-            print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.', flush=True)
+            print(f"[info] completed run_path={run_path} without cross-buffer comparison.", flush=True)
 
     dist.destroy_process_group()
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Compare DeepEP and MORI low-latency buffers.')
+    parser.add_argument('--path', choices=('deep', 'mori', 'both'), default='both',
+                        help='Select which buffer path(s) to run: deep-only, mori-only, or both (default).')
+    args = parser.parse_args()
+
     for setting in PRESET_SETTINGS:
         num_processes = setting.get('num_processes', 2)
         print('-------------------------------------------------------------------------', flush=True)
         print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
         
-        mp.spawn(compare_buffers, args=(num_processes, setting), nprocs=num_processes)
+        mp.spawn(compare_buffers, args=(num_processes, setting, args.path), nprocs=num_processes)
         print('*************************************************************************', flush=True)
 
 
