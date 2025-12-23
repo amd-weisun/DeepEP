@@ -22,7 +22,7 @@ PRESET_SETTINGS = [
         'num_topk': 4,
         'num_experts': 16,
         'seed': 0,
-        'log_values': False,
+        'log_values': True,
         'num_processes': 2,
     },
     # {
@@ -138,10 +138,14 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     device = torch.device('cuda', torch.cuda.current_device())
     
     # Data generation
-    x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+
+    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
+    row_values = row_values + rank * num_tokens
+    x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
+    # x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device='cuda')
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda')
     print(f"[debug] rank {rank} x shape={tuple(x.shape)} topk_idx shape={tuple(topk_idx.shape)} topk_weights shape={tuple(topk_weights.shape)}",
             flush=True)
 
@@ -229,6 +233,7 @@ def main():
     parser.add_argument('--path', choices=('deep', 'mori', 'both'), default='both',
                         help='Select which buffer path(s) to run: deep-only, mori-only, or both (default).')
     args = parser.parse_args()
+    # python  tests/test_compare_buffers_low_latency.py --path both
 
     for setting in PRESET_SETTINGS:
         num_processes = setting.get('num_processes', 2)
