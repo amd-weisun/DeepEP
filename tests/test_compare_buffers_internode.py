@@ -122,7 +122,7 @@ def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.T
 
 
 def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict):
-    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend=backend)
+    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
     num_experts = _round_up_num_experts(setting['num_experts'], num_ranks)
@@ -238,7 +238,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
 def main():
     parser = argparse.ArgumentParser(description='Compare deepEP and MORI buffers in an internode setting')
-    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl', 'gloo'], default='cpu:gloo,cuda:nccl',
+    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl', 'gloo'], default='gloo',
                         help='Backend for distributed communication (nccl/gloo via mp.spawn, mpi via mpiexec/mpirun)')
     parser.add_argument('--num-local-ranks', type=int, default=8,
                         help='Number of local ranks (GPUs) per node for spanning the test')
