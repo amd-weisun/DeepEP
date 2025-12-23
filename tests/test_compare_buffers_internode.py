@@ -238,17 +238,15 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
 def main():
     parser = argparse.ArgumentParser(description='Compare deepEP and MORI buffers in an internode setting')
-    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl'], default='mpi',
-                        help='Backend for distributed communication (mpi by default, nccl when GPU resources are bound via mp.spawn)')
+    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl', 'gloo'], default='nccl',
+                        help='Backend for distributed communication (nccl/gloo via mp.spawn, mpi via mpiexec/mpirun)')
     parser.add_argument('--num-local-ranks', type=int, default=8,
                         help='Number of local ranks (GPUs) per node for spanning the test')
     args = parser.parse_args()
 
     if args.backend == 'mpi':
-        dist.init_process_group(backend='mpi')
-        num_processes = args.num_local_ranks
-        rank = dist.get_rank()
-        local_rank = rank % num_processes
+        rank_env = int(os.getenv('RANK', '0'))
+        local_rank = rank_env % args.num_local_ranks
         for setting in PRESET_SETTINGS:
             if rank_env == 0:
                 print('-------------------------------------------------------------------------', flush=True)
