@@ -238,7 +238,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
 def main():
     parser = argparse.ArgumentParser(description='Compare deepEP and MORI buffers in an internode setting')
-    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl', 'gloo'], default='nccl',
+    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl', 'gloo'], default='cpu:gloo,cuda:nccl',
                         help='Backend for distributed communication (nccl/gloo via mp.spawn, mpi via mpiexec/mpirun)')
     parser.add_argument('--num-local-ranks', type=int, default=8,
                         help='Number of local ranks (GPUs) per node for spanning the test')
