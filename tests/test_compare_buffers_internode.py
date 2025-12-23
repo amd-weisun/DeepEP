@@ -245,8 +245,10 @@ def main():
     args = parser.parse_args()
 
     if args.backend == 'mpi':
-        rank_env = int(os.getenv('RANK', '0'))
-        local_rank = rank_env % args.num_local_ranks
+        dist.init_process_group(backend='mpi')
+        num_processes = args.num_local_ranks
+        rank = dist.get_rank()
+        local_rank = rank % num_processes
         for setting in PRESET_SETTINGS:
             if rank_env == 0:
                 print('-------------------------------------------------------------------------', flush=True)
