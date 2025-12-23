@@ -129,7 +129,7 @@ def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.T
     return masked
 
 
-def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict):
+def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict, run_path: str):
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
@@ -178,9 +178,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         'async_finish': False,
     }
 
+    run_deep = run_path in ('deep', 'both')
+    run_mori = run_path in ('mori', 'both')
+
     deep_output = buffer_deep.dispatch(**{k: (v.clone() if isinstance(v, torch.Tensor) else v)
-                                           for k, v in dispatch_args.items()})
-    mori_output = buffer_mori.dispatch(**dispatch_args)
+                                           for k, v in dispatch_args.items()}) if run_deep else None
+    mori_output = buffer_mori.dispatch(**dispatch_args) if run_mori else None
 
     def normalize_result(result):
         recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, _ = result
@@ -188,52 +191,62 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             recv_x = recv_x[0]
         return recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
 
-    deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
-    mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
+    deep_recv_x = deep_topk_idx = deep_topk_weights = deep_num_list = deep_handle = None
+    mori_recv_x = mori_topk_idx = mori_topk_weights = mori_num_list = mori_handle = None
+    if run_deep:
+        deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
+    if run_mori:
+        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
 
     mismatch = False
-    if deep_num_list != mori_num_list:
-        mismatch = True
-        if rank == 0:
-            print('[warning] num_tokens_per_expert_list mismatch', flush=True)
-            if log_values:
-                print('  deep_ep:', deep_num_list, flush=True)
-                print('  mori  :', mori_num_list, flush=True)
-    else:
-        if rank == 0:
-            print(f'[debug] rank {rank} num_tokens_per_expert_list match:', flush=True)
-            if log_values:
-                print('  deep_ep:', deep_num_list, flush=True)
-                print('  mori  :', mori_num_list, flush=True)
+    if run_deep and run_mori:
+        if deep_num_list != mori_num_list:
+            mismatch = True
+            if rank == 0:
+                print('[warning] num_tokens_per_expert_list mismatch', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_num_list, flush=True)
+                    print('  mori  :', mori_num_list, flush=True)
+        else:
+            if rank == 0:
+                print(f'[debug] rank {rank} num_tokens_per_expert_list match:', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_num_list, flush=True)
+                    print('  mori  :', mori_num_list, flush=True)
 
-    mori_topk_idx_filtered = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
-    mori_topk_weights_filtered = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx_filtered, rank, num_experts, num_ranks)
-    if not torch.equal(deep_topk_idx, mori_topk_idx_filtered):
-        mismatch = True
-        if rank == 0:
-            print('[warning] topk indices mismatch', flush=True)
-            if log_values:
-                print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
-                print('  mori  :', mori_topk_idx_filtered.cpu(), flush=True)
-    else:
-        if rank == 0:
-            print(f'[debug] rank {rank} topk indices match.', flush=True)
-            if log_values:
-                print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
-                print('  mori  :', mori_topk_idx.cpu(), flush=True)
+        mori_topk_idx_filtered = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
+        mori_topk_weights_filtered = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx_filtered, rank, num_experts, num_ranks)
+        if not torch.equal(deep_topk_idx, mori_topk_idx_filtered):
+            mismatch = True
+            if rank == 0:
+                print('[warning] topk indices mismatch', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+                    print('  mori  :', mori_topk_idx_filtered.cpu(), flush=True)
+        else:
+            if rank == 0:
+                print(f'[debug] rank {rank} topk indices match.', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+                    print('  mori  :', mori_topk_idx.cpu(), flush=True)
 
-    mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
-    mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
+        mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
+        mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
+    elif rank == 0:
+        print(f'[info] Running only {"DeepEP" if run_deep else "MORI"} path; skipping cross-checks.', flush=True)
 
     torch.cuda.synchronize()
-    deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
-                                                                    topk_weights=deep_topk_weights,
-                                                                    config=config)
-    mori_combined_x, mori_combined_weights, _ = buffer_mori.combine(mori_recv_x, mori_handle,
-                                                                     topk_weights=mori_topk_weights,
-                                                                     config=config)
+    if run_deep:
+        deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
+                                                                        topk_weights=deep_topk_weights,
+                                                                        config=config)
+    if run_mori:
+        mori_combined_x, mori_combined_weights, _ = buffer_mori.combine(mori_recv_x, mori_handle,
+                                                                         topk_weights=mori_topk_weights,
+                                                                         config=config)
 
-    mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
+    if run_deep and run_mori:
+        mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
 
     dist.barrier()
     if rank == 0:
@@ -241,6 +254,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             print('[warning] DeepEP and MORI buffers had mismatches during comparison.', flush=True)
         else:
             print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.', flush=True)
+    else:
+        if rank == 0:
+            print('Dispatch/combine finished for the selected path.', flush=True)
 
     dist.destroy_process_group()
 
@@ -251,6 +267,8 @@ def main():
                         help='Backend for distributed communication (nccl/gloo via mp.spawn, mpi via mpiexec/mpirun)')
     parser.add_argument('--num-local-ranks', type=int, default=8,
                         help='Number of local ranks (GPUs) per node for spanning the test')
+    parser.add_argument('--path', type=str, choices=['deep', 'mori', 'both'], default='both',
+                        help='Select which buffer implementation to run for debugging')
     args = parser.parse_args()
 
     if args.backend == 'mpi':
@@ -260,13 +278,13 @@ def main():
             if rank_env == 0:
                 print('-------------------------------------------------------------------------', flush=True)
                 print(f"[info] launching '{setting['name']}' with backend mpi", flush=True)
-            compare_buffers(local_rank, args.num_local_ranks, args.backend, setting)
+            compare_buffers(local_rank, args.num_local_ranks, args.backend, setting, args.path)
     else:
         for setting in PRESET_SETTINGS:
             num_processes = args.num_local_ranks
             print('-------------------------------------------------------------------------', flush=True)
             print(f"[info] launching '{setting['name']}' with backend {args.backend} and {num_processes} local ranks", flush=True)
-            mp.spawn(compare_buffers, args=(num_processes, args.backend, setting), nprocs=num_processes)
+            mp.spawn(compare_buffers, args=(num_processes, args.backend, setting, args.path), nprocs=num_processes)
             print('*************************************************************************', flush=True)
 
 
