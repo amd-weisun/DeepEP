@@ -145,7 +145,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     # x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 2.0)
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (0.0)
     # topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda')
     print(f"[debug] rank {rank} x shape={tuple(x.shape)} topk_idx shape={tuple(topk_idx.shape)} topk_weights shape={tuple(topk_weights.shape)}",
             flush=True)
