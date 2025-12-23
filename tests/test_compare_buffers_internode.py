@@ -1,36 +1,19 @@
+import argparse
+import os
+from typing import Optional
+
+import deep_ep
+import mori
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from typing import Optional
 
-import mori
-import deep_ep
-from utils import init_dist, inplace_unique, per_token_cast_to_fp8, per_token_cast_back
+from utils import init_dist, inplace_unique
 
 
 NUM_SMs = 8
 
 PRESET_SETTINGS = [
-    # {
-    #     'name': 'baseline',
-    #     'num_tokens': 8,
-    #     'hidden': 8,
-    #     'num_topk': 4,
-    #     'num_experts': 16,
-    #     'seed': 0,
-    #     'log_values': False,
-    #     'num_processes': 2,
-    # },
-    # {
-    #     'name': 'baseline_2',
-    #     'num_tokens': 16,
-    #     'hidden': 8,
-    #     'num_topk': 8,
-    #     'num_experts': 32,
-    #     'seed': 0,
-    #     'log_values': False,
-    #     'num_processes': 2,
-    # },
     {
         'name': 'setting_0',
         'num_tokens': 16,
@@ -39,7 +22,6 @@ PRESET_SETTINGS = [
         'num_experts': 32,
         'seed': 17,
         'log_values': False,
-        'num_processes': 2,
     },
     {
         'name': 'setting_1',
@@ -49,7 +31,6 @@ PRESET_SETTINGS = [
         'num_experts': 64,
         'seed': 17,
         'log_values': False,
-        'num_processes': 4,
     },
     {
         'name': 'setting_2',
@@ -59,7 +40,6 @@ PRESET_SETTINGS = [
         'num_experts': 256,
         'seed': 42,
         'log_values': False,
-        'num_processes': 8,
     },
     {
         'name': 'setting_3',
@@ -69,9 +49,13 @@ PRESET_SETTINGS = [
         'num_experts': 256,
         'seed': 47,
         'log_values': False,
-        'num_processes': 8,
     },
 ]
+
+
+def _round_up_num_experts(base: int, num_ranks: int) -> int:
+    per_rank = max((base + num_ranks - 1) // num_ranks, 1)
+    return per_rank * num_ranks
 
 
 def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: int, num_tokens: int):
@@ -95,18 +79,7 @@ def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: i
     token_idx_in_rank = token_idx_in_rank.T.contiguous().to(torch.int)
     is_token_in_rank = token_idx_in_rank >= 0
 
-    rank_to_tokens = []
-    for rank in range(num_ranks):
-        slot_idx = token_idx_in_rank[:, rank]
-        mask = slot_idx >= 0
-        if not mask.any():
-            continue
-        tokens = torch.nonzero(mask, as_tuple=False).squeeze(-1)
-        ordered = tokens[torch.argsort(slot_idx[mask])]
-        rank_to_tokens.append(ordered)
-    mori_token_order = torch.cat(rank_to_tokens, dim=0) if rank_to_tokens else torch.empty((0,), dtype=torch.long, device=topk_idx.device)
-
-    return num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank, mori_token_order
+    return num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank
 
 
 def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
@@ -128,63 +101,6 @@ def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-
     return same
 
 
-def reorder_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
-                         token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    if token_order.numel() == 0 or recv_x.size(0) != token_order.numel():
-        if dist.get_rank() == 0:
-            print('[warning] reorder_mori_outputs guard: shape mismatch or empty order.', flush=True)
-        return recv_x, recv_topk_idx, recv_topk_weights
-    if token_order.min() < 0 :
-        if dist.get_rank() == 0:
-            print('[warning] reorder_mori_outputs guard: order contains invalid indices.', flush=True)
-        return recv_x, recv_topk_idx, recv_topk_weights
-    unique_tokens = torch.unique(token_order)
-    if unique_tokens.numel() != token_order.numel():
-        if dist.get_rank() == 0:
-            print('[warning] reorder_mori_outputs guard: order contains repeated tokens.', flush=True)
-        return recv_x, recv_topk_idx, recv_topk_weights
-    perm = torch.argsort(token_order)
-    return recv_x[perm], recv_topk_idx[perm], recv_topk_weights[perm]
-
-
-def revert_mori_outputs(recv_x: torch.Tensor, recv_topk_idx: torch.Tensor, recv_topk_weights: torch.Tensor,
-                         token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    if token_order.numel() == 0 or recv_x.size(0) != token_order.numel():
-        if dist.get_rank() == 0:
-            print('[warning] revert_mori_outputs guard: shape mismatch or empty order.', flush=True)
-        return recv_x, recv_topk_idx, recv_topk_weights
-    if token_order.min() < 0 :
-        if dist.get_rank() == 0:
-            print('[warning] revert_mori_outputs guard: order contains invalid indices.', flush=True)
-        return recv_x, recv_topk_idx, recv_topk_weights
-    unique_tokens = torch.unique(token_order)
-    if unique_tokens.numel() != token_order.numel():
-        if dist.get_rank() == 0:
-            print('[warning] revert_mori_outputs guard: order contains repeated tokens.', flush=True)
-        return recv_x, recv_topk_idx, recv_topk_weights
-    perm = torch.argsort(token_order)
-    inverted = torch.empty_like(perm)
-    inverted[perm] = torch.arange(perm.numel(), device=perm.device)
-    return recv_x[inverted], recv_topk_idx[inverted], recv_topk_weights[inverted]
-
-def reorder_mori_handle(handle: tuple[torch.Tensor, torch.Tensor], token_order: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    if token_order.numel() == 0 or handle[0].size(0) != token_order.numel():
-        if dist.get_rank() == 0:
-            print('[warning] reorder_mori_handle guard: shape mismatch or empty order.', flush=True)
-        return handle
-    if token_order.min() < 0:
-        if dist.get_rank() == 0:
-            print('[warning] reorder_mori_handle guard: order contains invalid indices.', flush=True)
-        return handle
-    unique_tokens = torch.unique(token_order)
-    if unique_tokens.numel() != token_order.numel():
-        if dist.get_rank() == 0:
-            print('[warning] reorder_mori_handle guard: order contains repeated tokens.', flush=True)
-        return handle
-    perm = torch.argsort(token_order)
-    return handle[0][perm], handle[1]
-
-
 def mask_mori_topk_by_rank(topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
     experts_per_rank = max(num_experts // num_ranks, 1)
     rank_start = rank * experts_per_rank
@@ -204,13 +120,11 @@ def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.T
     masked[~local_mask] = 0
     return masked
 
-def _round_up_num_experts(base: int, num_ranks: int) -> int:
-    per_rank = max((base + num_ranks - 1) // num_ranks, 1)
-    return per_rank * num_ranks
 
-
-def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
-    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
+def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict):
+    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend=backend)
+    torch.manual_seed(setting.get('seed', 0))
+    torch.cuda.manual_seed_all(setting.get('seed', 0))
     num_experts = _round_up_num_experts(setting['num_experts'], num_ranks)
     num_tokens = setting['num_tokens']
     hidden = setting['hidden']
@@ -220,16 +134,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
 
-    buffer_deep = deep_ep.Buffer(group, int(1e9), 0, low_latency_mode=False,
-                                 num_qps_per_rank=num_experts // num_ranks)
+    buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
+                                 num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=num_experts // num_ranks,
+                              num_qps_per_rank=max(num_experts // num_ranks, 1),
                               max_num_inp_token_per_rank=num_tokens,
                               num_experts_per_token=num_topk,
                               gpu_per_node=num_local_ranks)
-
-    torch.manual_seed(setting.get('seed', 0))
-    torch.cuda.manual_seed_all(setting.get('seed', 0))
 
     device = torch.device('cuda', torch.cuda.current_device())
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
@@ -237,14 +148,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x = x_pure_rand
-    x_e4m3 = per_token_cast_to_fp8(x)
-    # x = x_e4m3
 
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 1.0)
 
-    num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank, mori_token_order = compute_dispatch_meta(
+    num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
         topk_idx, num_experts, num_ranks, num_tokens)
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
     config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
@@ -272,27 +181,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
-    mori_recv_x_orig = mori_recv_x.clone()
-    mori_topk_idx_orig = mori_topk_idx.clone()
-    mori_topk_weights_orig = mori_topk_weights.clone()
 
-    # mori_recv_x, mori_topk_idx, mori_topk_weights = reorder_mori_outputs(
-    #     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
-
-    if rank== 0 and log_values:
-        print('mori dispatch indices:', mori_handle[0].cpu(), flush=True)
-
-
-    # if rank== 0 and log_values:
-    #     print('reordered mori dispatch indices:', mori_handle[0].cpu(), flush=True)
     mismatch = False
-    if rank== 0 and log_values:
-        print('mori_token_order:', mori_token_order.cpu(), flush=True)
-
-    if rank== 0 and log_values:
-        print('mori src_token_pos:', mori_handle[1].cpu(), flush=True)
-
-
     if deep_num_list != mori_num_list:
         mismatch = True
         if rank == 0:
@@ -306,6 +196,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             if log_values:
                 print('  deep_ep:', deep_num_list, flush=True)
                 print('  mori  :', mori_num_list, flush=True)
+
     mori_topk_idx_filtered = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
     mori_topk_weights_filtered = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx_filtered, rank, num_experts, num_ranks)
     if not torch.equal(deep_topk_idx, mori_topk_idx_filtered):
@@ -321,19 +212,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             if log_values:
                 print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
                 print('  mori  :', mori_topk_idx.cpu(), flush=True)
+
     mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
-    # mori_recv_x_reverted, mori_topk_idx_reverted, mori_topk_weights_reverted = revert_mori_outputs(
-    #     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
-    # if rank == 0:
-    #     if not torch.equal(mori_recv_x_reverted, mori_recv_x_orig):
-    #         print('[warning] reverted recv_x deviates from original order', flush=True)
-    #     if not torch.equal(mori_topk_idx_reverted, mori_topk_idx_orig):
-    #         print('[warning] reverted topk_idx deviates from original order', flush=True)
-    #     if not torch.equal(mori_topk_weights_reverted, mori_topk_weights_orig):
-    #         print('[warning] reverted topk_weights deviates from original order', flush=True)
-    # mori_recv_x, mori_topk_idx, mori_topk_weights = mori_recv_x_reverted, mori_topk_idx_reverted, mori_topk_weights_reverted
-    # mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
 
     torch.cuda.synchronize()
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
@@ -344,7 +225,6 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
                                                                      config=config)
 
     mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
-    # mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank, log_values=log_values)
 
     dist.barrier()
     if rank == 0:
@@ -357,13 +237,28 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
 
 def main():
-    for setting in PRESET_SETTINGS:
-        num_processes = setting.get('num_processes', 2)
-        print('-------------------------------------------------------------------------', flush=True)
-        print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
-        
-        mp.spawn(compare_buffers, args=(num_processes, setting), nprocs=num_processes)
-        print('*************************************************************************', flush=True)
+    parser = argparse.ArgumentParser(description='Compare deepEP and MORI buffers in an internode setting')
+    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl'], default='mpi',
+                        help='Backend for distributed communication (mpi by default, nccl when GPU resources are bound via mp.spawn)')
+    parser.add_argument('--num-local-ranks', type=int, default=8,
+                        help='Number of local ranks (GPUs) per node for spanning the test')
+    args = parser.parse_args()
+
+    if args.backend == 'mpi':
+        rank_env = int(os.getenv('RANK', '0'))
+        local_rank = rank_env % args.num_local_ranks
+        for setting in PRESET_SETTINGS:
+            if rank_env == 0:
+                print('-------------------------------------------------------------------------', flush=True)
+                print(f"[info] launching '{setting['name']}' with backend mpi", flush=True)
+            compare_buffers(local_rank, args.num_local_ranks, args.backend, setting)
+    else:
+        for setting in PRESET_SETTINGS:
+            num_processes = args.num_local_ranks
+            print('-------------------------------------------------------------------------', flush=True)
+            print(f"[info] launching '{setting['name']}' with backend {args.backend} and {num_processes} local ranks", flush=True)
+            mp.spawn(compare_buffers, args=(num_processes, args.backend, setting), nprocs=num_processes)
+            print('*************************************************************************', flush=True)
 
 
 if __name__ == '__main__':
