@@ -193,10 +193,16 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                         print(f"[warning] recv_x mismatch at expert {i}", flush=True)
                         diff = (deep_data_sorted - mori_data_sorted).abs().max()
                         print(f"  max diff: {diff}", flush=True)
+                        if log_values:
+                            print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
+                            print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
                     mismatch = True
                 else:
                     if rank == 0:
                         print(f"[debug] recv_x expert {i} match.", flush=True)
+                        if log_values:
+                            print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
+                            print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
     elif rank == 0:
         print(f"[info] skipping cross-buffer dispatch comparison (path={run_path}).", flush=True)
 
