@@ -14,7 +14,7 @@ PRESET_SETTINGS = [
     {
         'name': 'baseline',
         'num_tokens': 8,
-        'hidden': 8,
+        'hidden': 128,
         'num_topk': 4,
         'num_experts': 16,
         'seed': 0,
