@@ -34,12 +34,12 @@ PRESET_SETTINGS = [
     {
         'name': 'setting_0',
         'num_tokens': 16,
-        'hidden': 128,
+        'hidden': 256,
         'num_topk': 8,
-        'num_experts': 64,
+        'num_experts': 32,
         'seed': 17,
         'log_values': False,
-        'num_processes': 4,
+        'num_processes': 2,
     },
     {
         'name': 'setting_1',
