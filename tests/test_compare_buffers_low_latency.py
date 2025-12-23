@@ -139,6 +139,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device='cuda')
+    print(f"[debug] rank {rank} x shape={tuple(x.shape)} topk_idx shape={tuple(topk_idx.shape)} topk_weights shape={tuple(topk_weights.shape)}",
+            flush=True)
 
     # Low Latency Dispatch
     use_fp8 = False
@@ -155,7 +157,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     if run_mori:
         mori_packed_recv_x, mori_packed_recv_count, mori_handle, mori_event, mori_hook = \
             buffer_mori.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
-                                             use_fp8=use_fp8, async_finish=False)
+                                             use_fp8=use_fp8, async_finish=False, topk_weights=topk_weights)
 
     mismatch = False
     
