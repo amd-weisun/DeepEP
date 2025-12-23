@@ -145,7 +145,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     # x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 1.0)
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 0.1)
     # topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda')
     print(f"[debug] rank {rank} x shape={tuple(x.shape)} topk_idx shape={tuple(topk_idx.shape)} topk_weights shape={tuple(topk_weights.shape)}",
             flush=True)
@@ -194,6 +194,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                         diff = (deep_data_sorted - mori_data_sorted).abs().max()
                         print(f"  max diff: {diff}", flush=True)
                     mismatch = True
+                else:
+                    if rank == 0:
+                        print(f"[debug] recv_x expert {i} match.", flush=True)
     elif rank == 0:
         print(f"[info] skipping cross-buffer dispatch comparison (path={run_path}).", flush=True)
 
