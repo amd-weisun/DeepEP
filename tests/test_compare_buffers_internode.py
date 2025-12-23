@@ -58,7 +58,7 @@ def _round_up_num_experts(base: int, num_ranks: int) -> int:
     return per_rank * num_ranks
 
 
-def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: int, num_tokens: int):
+def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: int, num_tokens: int, num_local_ranks: int):
     num_tokens_per_expert = torch.zeros((num_experts,), dtype=torch.int, device=topk_idx.device)
     for i in range(num_experts):
         num_tokens_per_expert[i] = (topk_idx == i).sum()
@@ -79,7 +79,15 @@ def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: i
     token_idx_in_rank = token_idx_in_rank.T.contiguous().to(torch.int)
     is_token_in_rank = token_idx_in_rank >= 0
 
-    return num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank
+    num_nodes = max(num_ranks // max(num_local_ranks, 1), 1)
+    rdma_rank_idx = rank_idx // max(num_local_ranks, 1)
+    rdma_rank_idx.masked_fill_(rank_idx == -1, -1)
+    inplace_unique(rdma_rank_idx, num_nodes)
+    num_tokens_per_rdma_rank = torch.empty((num_nodes,), dtype=torch.int, device=topk_idx.device)
+    for i in range(num_nodes):
+        num_tokens_per_rdma_rank[i] = (rdma_rank_idx == i).sum()
+
+    return num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank
 
 
 def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
@@ -153,14 +161,15 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 1.0)
 
-    num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
-        topk_idx, num_experts, num_ranks, num_tokens)
+    num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
+        topk_idx, num_experts, num_ranks, num_tokens, num_local_ranks)
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
     config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
     dispatch_args = {
         'x': x,
         'num_tokens_per_rank': num_tokens_per_rank,
+        'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
         'is_token_in_rank': is_token_in_rank,
         'num_tokens_per_expert': num_tokens_per_expert,
         'topk_idx': topk_idx,
