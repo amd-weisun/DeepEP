@@ -210,6 +210,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     
     mori_combined_x = None
     if run_mori:
+        if(rank==0):
+            print(f"[info] mori low_latency_combine with topk_weights={topk_weights}", flush=True)
+            print(f"[info] mori low_latency_combine with dispatch out weights={mori_handle[3]}", flush=True)
         mori_sim_gemm_x = mori_packed_recv_x.clone()
         mori_combined_x, mori_combine_event, mori_combine_hook = \
             buffer_mori.low_latency_combine(mori_sim_gemm_x, topk_idx, topk_weights, mori_handle, async_finish=False)
