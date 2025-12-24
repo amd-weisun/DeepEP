@@ -270,6 +270,51 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             recv_x = recv_x[0]
         return recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
 
+    def clone_dispatch_args(args: dict):
+        return {k: (v.clone() if isinstance(v, torch.Tensor) else v) for k, v in args.items()}
+
+    def bench_once(buffer, base_dispatch_args):
+        cloned_args = clone_dispatch_args(base_dispatch_args)
+        torch.cuda.synchronize()
+        dispatch_start = torch.cuda.Event(enable_timing=True)
+        dispatch_end = torch.cuda.Event(enable_timing=True)
+        combine_start = torch.cuda.Event(enable_timing=True)
+        combine_end = torch.cuda.Event(enable_timing=True)
+
+        dispatch_start.record()
+        result = buffer.dispatch(**cloned_args)
+        recv_x, _, recv_topk_weights, _, handle = normalize_result(result)
+        dispatch_end.record()
+
+        combine_start.record()
+        buffer.combine(recv_x, handle, topk_weights=recv_topk_weights, config=base_dispatch_args['config'])
+        combine_end.record()
+        torch.cuda.synchronize()
+        dispatch_ms = dispatch_start.elapsed_time(dispatch_end)
+        combine_ms = combine_start.elapsed_time(combine_end)
+        return dispatch_ms, combine_ms
+
+    def benchmark_buffer(name: str, buffer, base_dispatch_args, *, num_warmups: int = 1, num_iters: int = 5):
+        if buffer is None:
+            return None
+        for _ in range(num_warmups):
+            bench_once(buffer, base_dispatch_args)
+        times = [bench_once(buffer, base_dispatch_args) for _ in range(num_iters)]
+        dispatch_times = [t[0] for t in times]
+        combine_times = [t[1] for t in times]
+        stats = {
+            'dispatch_avg_ms': sum(dispatch_times) / len(dispatch_times),
+            'dispatch_min_ms': min(dispatch_times),
+            'dispatch_max_ms': max(dispatch_times),
+            'combine_avg_ms': sum(combine_times) / len(combine_times),
+            'combine_min_ms': min(combine_times),
+            'combine_max_ms': max(combine_times),
+        }
+        if rank == 0:
+            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f} ms, max={stats['dispatch_max_ms']:.3f} ms)", flush=True)
+            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f} ms, max={stats['combine_max_ms']:.3f} ms)", flush=True)
+        return stats
+
     deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
     mori_recv_x_orig = mori_recv_x.clone()
@@ -323,17 +368,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
                 print('  mori  :', mori_topk_idx.cpu(), flush=True)
     mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
     mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
-    # mori_recv_x_reverted, mori_topk_idx_reverted, mori_topk_weights_reverted = revert_mori_outputs(
-    #     mori_recv_x, mori_topk_idx, mori_topk_weights, mori_handle[1])
-    # if rank == 0:
-    #     if not torch.equal(mori_recv_x_reverted, mori_recv_x_orig):
-    #         print('[warning] reverted recv_x deviates from original order', flush=True)
-    #     if not torch.equal(mori_topk_idx_reverted, mori_topk_idx_orig):
-    #         print('[warning] reverted topk_idx deviates from original order', flush=True)
-    #     if not torch.equal(mori_topk_weights_reverted, mori_topk_weights_orig):
-    #         print('[warning] reverted topk_weights deviates from original order', flush=True)
-    # mori_recv_x, mori_topk_idx, mori_topk_weights = mori_recv_x_reverted, mori_topk_idx_reverted, mori_topk_weights_reverted
-    # mori_handle = reorder_mori_handle(mori_handle, mori_handle[1])
+
 
     torch.cuda.synchronize()
     deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
@@ -346,12 +381,24 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
     # mismatch |= not warn_allclose('combined_topk_weights', deep_combined_weights, mori_combined_weights, rank=rank, log_values=log_values)
 
+
     dist.barrier()
     if rank == 0:
         if mismatch:
             print('[warning] DeepEP and MORI buffers had mismatches during comparison.', flush=True)
         else:
             print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.', flush=True)
+
+
+    dist.barrier()
+    deep_perf = benchmark_buffer('DeepEP', buffer_deep, dispatch_args)
+    mori_perf = benchmark_buffer('MORI', buffer_mori, dispatch_args)
+    dist.barrier()
+    if rank == 0 and deep_perf and mori_perf:
+        dispatch_ratio = mori_perf['dispatch_avg_ms'] / max(deep_perf['dispatch_avg_ms'], 1e-6)
+        combine_ratio = mori_perf['combine_avg_ms'] / max(deep_perf['combine_avg_ms'], 1e-6)
+        print(f"[perf] MORI/DeepEP dispatch avg ratio: {dispatch_ratio:.3f}x", flush=True)
+        print(f"[perf] MORI/DeepEP combine  avg ratio: {combine_ratio:.3f}x", flush=True)
 
     dist.destroy_process_group()
 
