@@ -153,6 +153,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     device = torch.device('cuda', torch.cuda.current_device())
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
     row_values = row_values + rank * num_tokens
+    
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x = x_pure_rand
