@@ -162,8 +162,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                 mori_data = mori_packed_recv_x[i, :count]
                 
                 # Sort for comparison
-                deep_idx = torch.argsort(deep_data[:, 0], stable=False)
-                mori_idx = torch.argsort(mori_data[:, 0],  stable=False)
+                deep_idx = torch.argsort(deep_data[:, 0], stable=True)
+                mori_idx = torch.argsort(mori_data[:, 0], stable=True)
                 
                 deep_data_sorted = deep_data[deep_idx]
                 mori_data_sorted = mori_data[mori_idx]
