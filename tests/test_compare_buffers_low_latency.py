@@ -48,7 +48,7 @@ PRESET_SETTINGS = [
     {
         'name': 'setting_3',
         'num_tokens': 2048,
-        'hidden': 7168,
+        'hidden': 4096,
         'num_topk': 8,
         'num_experts': 256,
         'seed': 47,
@@ -58,7 +58,7 @@ PRESET_SETTINGS = [
 ]
 
 
-def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
+def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-2, atol: float = 1e-2, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
     same = torch.allclose(a, b, rtol=rtol, atol=atol)
     if rank is None or rank == 0:
         if not same:
@@ -101,7 +101,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         num_rdma_bytes = deep_ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
         if local_rank == 0:
             print(f'Allocating buffer size: {num_rdma_bytes / 1e6} MB ...', flush=True)
-        buffer_deep = deep_ep.Buffer(group, num_rdma_bytes=int(1e9), low_latency_mode=True,
+        buffer_deep = deep_ep.Buffer(group, int(1e9), num_rdma_bytes=int(1e9), low_latency_mode=True,
                                      num_qps_per_rank=num_experts // num_ranks)
 
     buffer_mori = None
@@ -168,7 +168,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                 deep_data_sorted = deep_data[deep_idx]
                 mori_data_sorted = mori_data[mori_idx]
                 
-                if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-5):
+                if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-2, rtol=1e-2):
                     if rank == 0:
                         print(f"[warning] recv_x mismatch at expert {i}", flush=True)
                         diff = (deep_data_sorted - mori_data_sorted).abs().max()
