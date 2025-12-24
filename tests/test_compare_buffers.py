@@ -242,7 +242,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') * (rank + 1.0)
+    topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device='cuda')
 
     num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank, mori_token_order = compute_dispatch_meta(
         topk_idx, num_experts, num_ranks, num_tokens)
