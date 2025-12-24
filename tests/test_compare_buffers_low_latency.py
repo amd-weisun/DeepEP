@@ -101,7 +101,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         num_rdma_bytes = deep_ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
         if local_rank == 0:
             print(f'Allocating buffer size: {num_rdma_bytes / 1e6} MB ...', flush=True)
-        buffer_deep = deep_ep.Buffer(group, num_rdma_bytes=num_rdma_bytes, low_latency_mode=True,
+        buffer_deep = deep_ep.Buffer(group, num_rdma_bytes=int(1e9), low_latency_mode=True,
                                      num_qps_per_rank=num_experts // num_ranks)
 
     buffer_mori = None
@@ -121,8 +121,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
 
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
     row_values = row_values + rank * num_tokens
-    x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    # x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    # x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
+    x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
@@ -179,8 +179,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                     mismatch = True
                 else:
                     if rank == 0:
-                        print(f"[debug] recv_x expert {i} match.", flush=True)
                         if log_values:
+                            print(f"[debug] recv_x expert {i} match.", flush=True)
                             print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
                             print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
     elif rank == 0:
@@ -196,9 +196,6 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     
     mori_combined_x = None
     if run_mori:
-        if(rank==0):
-            print(f"[info] mori low_latency_combine with topk_weights={topk_weights}", flush=True)
-            print(f"[info] mori low_latency_combine with dispatch out weights={mori_handle[3]}", flush=True)
         mori_sim_gemm_x = mori_packed_recv_x.clone()
         mori_combined_x, mori_combine_event, mori_combine_hook = \
             buffer_mori.low_latency_combine(mori_sim_gemm_x, topk_idx, topk_weights, mori_handle, async_finish=False)
