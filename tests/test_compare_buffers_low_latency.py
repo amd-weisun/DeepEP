@@ -101,7 +101,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         num_rdma_bytes = deep_ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
         if local_rank == 0:
             print(f'Allocating buffer size: {num_rdma_bytes / 1e6} MB ...', flush=True)
-        buffer_deep = deep_ep.Buffer(group, int(1e9), num_rdma_bytes=int(1e9), low_latency_mode=True,
+        buffer_deep = deep_ep.Buffer(group, num_rdma_bytes=num_rdma_bytes, low_latency_mode=True,
                                      num_qps_per_rank=num_experts // num_ranks)
 
     buffer_mori = None
