@@ -26,14 +26,24 @@ PRESET_SETTINGS = [
         'num_processes': 2,
     },
     {
-        'name': 'setting_1',
-        'num_tokens': 128,
+        'name': 'setting_0',
+        'num_tokens': 64,
         'hidden': 4096,
         'num_topk': 8,
-        'num_experts': 64,
-        'seed': 17,
+        'num_experts': 128,
+        'seed': 29,
         'log_values': False,
         'num_processes': 4,
+    },
+    {
+        'name': 'setting_1',
+        'num_tokens': 64,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 31,
+        'log_values': False,
+        'num_processes': 8,
     },
     {
         'name': 'setting_2',
@@ -44,17 +54,7 @@ PRESET_SETTINGS = [
         'seed': 42,
         'log_values': False,
         'num_processes': 8,
-    },
-    {
-        'name': 'setting_3',
-        'num_tokens': 2048,
-        'hidden': 4096,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 47,
-        'log_values': False,
-        'num_processes': 8,
-    },
+    }
 ]
 
 
