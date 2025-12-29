@@ -136,6 +136,28 @@ def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-
     return same
 
 
+def orderless_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-2, atol: float = 1e-2, *, rank: Optional[int] = None, log_values: bool = True) -> bool:
+    def summarize(tensor: torch.Tensor) -> torch.Tensor:
+        mat = tensor.float().reshape(tensor.size(0), -1)
+        return torch.sort(mat.sum(dim=1))[0]
+
+    sum_a = summarize(a)
+    sum_b = summarize(b)
+    same = torch.allclose(sum_a, sum_b, rtol=rtol, atol=atol)
+    if rank is None or rank == 0:
+        if not same:
+            max_diff = torch.max(torch.abs(sum_a - sum_b))
+            print(f'[warning] {name} orderless mismatch: max diff {max_diff:.6e}', flush=True)
+        else:
+            print(f'[debug] {name} orderless match.', flush=True)
+        if log_values:
+            print(sum_a.cpu(), flush=True)
+            print(sum_b.cpu(), flush=True)
+        else:
+            print(f'[info] {name} orderless tensor values suppressed (log_values False).', flush=True)
+    return same
+
+
 def mask_mori_topk_by_rank(topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
     experts_per_rank = max(num_experts // num_ranks, 1)
     rank_start = rank * experts_per_rank
@@ -275,6 +297,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
     if run_deep and run_mori:
         mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
+        mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
 
     dist.barrier()
     if rank == 0:
