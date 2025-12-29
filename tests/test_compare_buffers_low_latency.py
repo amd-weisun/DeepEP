@@ -15,30 +15,30 @@ NUM_SMs = 8
         # case 4096: case_macro(4096); \
         # case 7168: case_macro(7168); \
 PRESET_SETTINGS = [
-    {
-        'name': 'baseline',
-        'num_tokens': 8,
-        'hidden': 2560,
-        'num_topk': 4,
-        'num_experts': 16,
-        'seed': 0,
-        'log_values': False,
-        'num_processes': 2,
-    },
-    {
-        'name': 'setting_0',
-        'num_tokens': 64,
-        'hidden': 4096,
-        'num_topk': 8,
-        'num_experts': 128,
-        'seed': 29,
-        'log_values': False,
-        'num_processes': 4,
-    },
+    # {
+    #     'name': 'baseline',
+    #     'num_tokens': 8,
+    #     'hidden': 2560,
+    #     'num_topk': 4,
+    #     'num_experts': 16,
+    #     'seed': 0,
+    #     'log_values': False,
+    #     'num_processes': 2,
+    # },
+    # {
+    #     'name': 'setting_0',
+    #     'num_tokens': 64,
+    #     'hidden': 4096,
+    #     'num_topk': 8,
+    #     'num_experts': 128,
+    #     'seed': 29,
+    #     'log_values': False,
+    #     'num_processes': 4,
+    # },
     {
         'name': 'setting_1',
         'num_tokens': 64,
-        'hidden': 7168,
+        'hidden': 4096,
         'num_topk': 8,
         'num_experts': 256,
         'seed': 31,
@@ -50,7 +50,7 @@ PRESET_SETTINGS = [
         'num_tokens': 128,
         'hidden': 7168,
         'num_topk': 8,
-        'num_experts': 256,
+        'num_experts': 288,
         'seed': 42,
         'log_values': False,
         'num_processes': 8,
@@ -130,9 +130,63 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     # print(f"[debug] rank {rank} x shape={tuple(x.shape)} topk_idx shape={tuple(topk_idx.shape)} topk_weights shape={tuple(topk_weights.shape)}",
     #         flush=True)
 
-    # Low Latency Dispatch
     use_fp8 = False
-    
+
+    def clone_low_latency_inputs():
+        return {
+            'x': x.clone(),
+            'topk_idx': topk_idx.clone(),
+            'topk_weights': topk_weights.clone(),
+            'num_tokens': num_tokens,
+            'num_experts': num_experts,
+            'use_fp8': use_fp8,
+            'async_finish': False,
+        }
+
+    def bench_once(buffer):
+        inputs = clone_low_latency_inputs()
+        torch.cuda.synchronize()
+        dispatch_start = torch.cuda.Event(enable_timing=True)
+        dispatch_end = torch.cuda.Event(enable_timing=True)
+        combine_start = torch.cuda.Event(enable_timing=True)
+        combine_end = torch.cuda.Event(enable_timing=True)
+
+        dispatch_start.record()
+        packed_recv_x, packed_recv_count, handle, event, hook = \
+            buffer.low_latency_dispatch(inputs['x'], inputs['topk_idx'], inputs['num_tokens'],
+                                        inputs['num_experts'], use_fp8=inputs['use_fp8'],
+                                        async_finish=inputs['async_finish'])
+        dispatch_end.record()
+
+        combine_start.record()
+        buffer.low_latency_combine(packed_recv_x, inputs['topk_idx'], inputs['topk_weights'], handle,
+                                   async_finish=False)
+        combine_end.record()
+        torch.cuda.synchronize()
+        return dispatch_start.elapsed_time(dispatch_end), combine_start.elapsed_time(combine_end)
+
+    def benchmark_low_latency(name: str, buffer, *, num_warmups: int = 1, num_iters: int = 5):
+        if buffer is None:
+            return None
+        for _ in range(num_warmups):
+            bench_once(buffer)
+        times = [bench_once(buffer) for _ in range(num_iters)]
+        dispatch_times = [t[0] for t in times]
+        combine_times = [t[1] for t in times]
+        stats = {
+            'dispatch_avg_ms': sum(dispatch_times) / len(dispatch_times),
+            'dispatch_min_ms': min(dispatch_times),
+            'dispatch_max_ms': max(dispatch_times),
+            'combine_avg_ms': sum(combine_times) / len(combine_times),
+            'combine_min_ms': min(combine_times),
+            'combine_max_ms': max(combine_times),
+        }
+        if rank == 0:
+            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f}, max={stats['dispatch_max_ms']:.3f})", flush=True)
+            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f}, max={stats['combine_max_ms']:.3f})", flush=True)
+        return stats
+
+    # Low Latency Dispatch
     # DeepEP
     deep_packed_recv_x = deep_packed_recv_count = deep_handle = None
     if run_deep:
@@ -204,6 +258,16 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         mismatch |= not warn_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
     elif rank == 0:
         print(f"[info] skipping cross-buffer combine comparison (path={run_path}).", flush=True)
+
+    dist.barrier()
+    deep_perf = benchmark_low_latency('DeepEP', buffer_deep)
+    mori_perf = benchmark_low_latency('MORI', buffer_mori)
+    dist.barrier()
+    if rank == 0 and deep_perf and mori_perf:
+        dispatch_ratio = mori_perf['dispatch_avg_ms'] / max(deep_perf['dispatch_avg_ms'], 1e-6)
+        combine_ratio = mori_perf['combine_avg_ms'] / max(deep_perf['combine_avg_ms'], 1e-6)
+        print(f"[perf] MORI/DeepEP dispatch avg ratio: {dispatch_ratio:.3f}x", flush=True)
+        print(f"[perf] MORI/DeepEP combine  avg ratio: {combine_ratio:.3f}x", flush=True)
 
     dist.barrier()
     if rank == 0:
