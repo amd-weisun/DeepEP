@@ -185,7 +185,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         packed_recv_x, packed_recv_count, handle, event, hook = \
             buffer.low_latency_dispatch(**dispatch_kwargs)
         dispatch_end.record()
-
+        torch.cuda.synchronize()
         combine_start.record()
         buffer.low_latency_combine(packed_recv_x, inputs['topk_idx'], inputs['topk_weights'], handle,
                                    async_finish=False)
