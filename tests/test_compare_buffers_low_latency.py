@@ -15,16 +15,16 @@ NUM_SMs = 8
         # case 4096: case_macro(4096); \
         # case 7168: case_macro(7168); \
 PRESET_SETTINGS = [
-    {
-        'name': 'baseline',
-        'num_tokens': 8,
-        'hidden': 2560,
-        'num_topk': 4,
-        'num_experts': 16,
-        'seed': 0,
-        'log_values': False,
-        'num_processes': 2,
-    },
+    # {
+    #     'name': 'baseline',
+    #     'num_tokens': 8,
+    #     'hidden': 2560,
+    #     'num_topk': 4,
+    #     'num_experts': 16,
+    #     'seed': 0,
+    #     'log_values': False,
+    #     'num_processes': 2,
+    # },
     # {
     #     'name': 'setting_0',
     #     'num_tokens': 64,
@@ -46,7 +46,27 @@ PRESET_SETTINGS = [
     #     'num_processes': 8,
     # },
     {
-        'name': 'setting_2',
+        'name': 'setting_2_0',
+        'num_tokens': 32,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 288,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
+    {
+        'name': 'setting_2_1',
+        'num_tokens': 64,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 288,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
+    {
+        'name': 'setting_2_2',
         'num_tokens': 128,
         'hidden': 7168,
         'num_topk': 8,
@@ -54,7 +74,17 @@ PRESET_SETTINGS = [
         'seed': 42,
         'log_values': False,
         'num_processes': 8,
-    }
+    },
+    {
+        'name': 'setting_2_3',
+        'num_tokens': 256,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 288,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
 ]
 
 
