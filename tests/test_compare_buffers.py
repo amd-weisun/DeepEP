@@ -393,8 +393,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
 
     dist.barrier()
-    deep_perf = benchmark_buffer('DeepEP', buffer_deep)
-    mori_perf = benchmark_buffer('MORI', buffer_mori)
+    deep_perf = benchmark_buffer('DeepEP', buffer_deep,num_warmups=5, num_iters=50)
+    mori_perf = benchmark_buffer('MORI', buffer_mori,num_warmups=5, num_iters=50)
     dist.barrier()
     if rank == 0 and deep_perf and mori_perf:
         dispatch_ratio = mori_perf['dispatch_avg_ms'] / max(deep_perf['dispatch_avg_ms'], 1e-6)
