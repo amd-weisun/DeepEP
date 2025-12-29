@@ -143,16 +143,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             'async_finish': False,
         }
 
-    def reset_low_latency_buffer(buffer):
-        if buffer is None:
-            return
-        clean_fn = getattr(buffer, 'clean_low_latency_buffer', None)
-        if callable(clean_fn):
-            clean_fn(num_tokens, hidden, num_experts)
-
     def bench_once(buffer):
         inputs = clone_low_latency_inputs()
-        # reset_low_latency_buffer(buffer)
         torch.cuda.synchronize()
         dispatch_start = torch.cuda.Event(enable_timing=True)
         dispatch_end = torch.cuda.Event(enable_timing=True)
