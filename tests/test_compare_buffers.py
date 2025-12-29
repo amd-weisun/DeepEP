@@ -11,36 +11,36 @@ from utils import init_dist, inplace_unique, per_token_cast_to_fp8, per_token_ca
 NUM_SMs = 8
 
 PRESET_SETTINGS = [
-    {
-        'name': 'baseline',
-        'num_tokens': 8,
-        'hidden': 8,
-        'num_topk': 4,
-        'num_experts': 16,
-        'seed': 0,
-        'log_values': True,
-        'num_processes': 2,
-    },
-    {
-        'name': 'baseline_2',
-        'num_tokens': 16,
-        'hidden': 8,
-        'num_topk': 8,
-        'num_experts': 32,
-        'seed': 0,
-        'log_values': False,
-        'num_processes': 2,
-    },
-    {
-        'name': 'setting_0',
-        'num_tokens': 16,
-        'hidden': 256,
-        'num_topk': 8,
-        'num_experts': 32,
-        'seed': 17,
-        'log_values': False,
-        'num_processes': 2,
-    },
+    # {
+    #     'name': 'baseline',
+    #     'num_tokens': 8,
+    #     'hidden': 8,
+    #     'num_topk': 4,
+    #     'num_experts': 16,
+    #     'seed': 0,
+    #     'log_values': True,
+    #     'num_processes': 2,
+    # },
+    # {
+    #     'name': 'baseline_2',
+    #     'num_tokens': 16,
+    #     'hidden': 8,
+    #     'num_topk': 8,
+    #     'num_experts': 32,
+    #     'seed': 0,
+    #     'log_values': False,
+    #     'num_processes': 2,
+    # },
+    # {
+    #     'name': 'setting_0',
+    #     'num_tokens': 16,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 32,
+    #     'seed': 17,
+    #     'log_values': False,
+    #     'num_processes': 2,
+    # },
     {
         'name': 'setting_1',
         'num_tokens': 128,
@@ -253,7 +253,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
         x = x_pure_rand
         scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
         topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-        topk_weights = torch.zeros((num_tokens, num_topk), dtype=torch.float32, device='cuda')
+        topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device='cuda')
         num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank, mori_token_order = compute_dispatch_meta(
             topk_idx, num_experts, num_ranks, num_tokens)
         session = {
