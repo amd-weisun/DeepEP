@@ -155,7 +155,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         dispatch_kwargs = dict(
             x=inputs['x'],
             topk_idx=inputs['topk_idx'],
-            num_tokens=inputs['num_tokens'],
+            num_max_dispatch_tokens_per_rank=inputs['num_tokens'],
             num_experts=inputs['num_experts'],
             use_fp8=inputs['use_fp8'],
             async_finish=inputs['async_finish'],
