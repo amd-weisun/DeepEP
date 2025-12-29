@@ -71,6 +71,16 @@ PRESET_SETTINGS = [
         'log_values': False,
         'num_processes': 8,
     },
+    {
+        'name': 'setting_4',
+        'num_tokens': 4096,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 49,
+        'log_values': False,
+        'num_processes': 8,
+    },
 ]
 
 
