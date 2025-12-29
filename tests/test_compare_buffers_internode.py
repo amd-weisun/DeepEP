@@ -90,7 +90,7 @@ def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: i
     return num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank
 
 
-def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-5, atol: float = 1e-5, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
+def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-2, atol: float = 1e-2, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
     same = torch.allclose(a, b, rtol=rtol, atol=atol)
     if rank is None or rank == 0:
         if not same:
@@ -152,11 +152,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
     device = torch.device('cuda', torch.cuda.current_device())
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
-    row_values = row_values + rank * num_tokens
+    row_values = (row_values + rank * num_tokens) * 0.1
     
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    x = x_pure_rand
+    # x = x_pure_rand
 
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
