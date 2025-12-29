@@ -41,19 +41,39 @@ PRESET_SETTINGS = [
     #     'log_values': False,
     #     'num_processes': 2,
     # },
-    {
-        'name': 'setting_1',
-        'num_tokens': 128,
-        'hidden': 4096,
-        'num_topk': 8,
-        'num_experts': 64,
-        'seed': 17,
-        'log_values': False,
-        'num_processes': 4,
-    },
+    # {
+    #     'name': 'setting_1',
+    #     'num_tokens': 128,
+    #     'hidden': 4096,
+    #     'num_topk': 8,
+    #     'num_experts': 64,
+    #     'seed': 17,
+    #     'log_values': False,
+    #     'num_processes': 4,
+    # },
     {
         'name': 'setting_2',
         'num_tokens': 128,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
+    {
+        'name': 'setting_2_1',
+        'num_tokens': 512,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+    },
+    {
+        'name': 'setting_2_2',
+        'num_tokens': 1024,
         'hidden': 7168,
         'num_topk': 8,
         'num_experts': 256,
@@ -306,7 +326,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
         combine_ms = combine_start.elapsed_time(combine_end)
         return dispatch_ms, combine_ms
 
-    def benchmark_buffer(name: str, buffer, *, num_warmups: int = 1, num_iters: int = 5):
+    def benchmark_buffer(name: str, buffer, *, num_warmups: int = 5, num_iters: int = 50):
         if buffer is None:
             return None
         for _ in range(num_warmups):
