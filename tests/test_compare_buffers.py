@@ -232,37 +232,39 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     torch.cuda.manual_seed_all(setting.get('seed', 0))
 
     device = torch.device('cuda', torch.cuda.current_device())
-    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
-    row_values = row_values + rank * num_tokens
-    x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    x = x_pure_rand
-    # x_e4m3 = per_token_cast_to_fp8(x)
-    # x = x_e4m3
-
-    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.zeros((num_tokens, num_topk), dtype=torch.float32, device='cuda')
-
-    num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank, mori_token_order = compute_dispatch_meta(
-        topk_idx, num_experts, num_ranks, num_tokens)
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
     config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
-    dispatch_args = {
-        'x': x,
-        'num_tokens_per_rank': num_tokens_per_rank,
-        'is_token_in_rank': is_token_in_rank,
-        'num_tokens_per_expert': num_tokens_per_expert,
-        'topk_idx': topk_idx,
-        'topk_weights': topk_weights,
-        'config': config,
-        'async_finish': False,
-    }
+    def make_dispatch_session():
+        row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
+        row_values = row_values + rank * num_tokens
+        x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
+        x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+        x = x_pure_rand
+        scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+        topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+        topk_weights = torch.zeros((num_tokens, num_topk), dtype=torch.float32, device='cuda')
+        num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank, mori_token_order = compute_dispatch_meta(
+            topk_idx, num_experts, num_ranks, num_tokens)
+        session = {
+            'x': x,
+            'num_tokens_per_rank': num_tokens_per_rank,
+            'is_token_in_rank': is_token_in_rank,
+            'num_tokens_per_expert': num_tokens_per_expert,
+            'topk_idx': topk_idx,
+            'topk_weights': topk_weights,
+            'config': config,
+            'async_finish': False,
+        }
+        return session, mori_token_order
 
-    deep_output = buffer_deep.dispatch(**{k: (v.clone() if isinstance(v, torch.Tensor) else v)
-                                           for k, v in dispatch_args.items()})
-    mori_output = buffer_mori.dispatch(**dispatch_args)
+    base_dispatch_args, mori_token_order = make_dispatch_session()
+
+    def clone_dispatch_args(args: dict):
+        return {k: (v.clone() if isinstance(v, torch.Tensor) else v) for k, v in args.items()}
+
+    deep_output = buffer_deep.dispatch(**clone_dispatch_args(base_dispatch_args))
+    mori_output = buffer_mori.dispatch(**clone_dispatch_args(base_dispatch_args))
 
     def normalize_result(result):
         recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, _ = result
@@ -270,11 +272,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
             recv_x = recv_x[0]
         return recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
 
-    def clone_dispatch_args(args: dict):
-        return {k: (v.clone() if isinstance(v, torch.Tensor) else v) for k, v in args.items()}
 
-    def bench_once(buffer, base_dispatch_args):
-        cloned_args = clone_dispatch_args(base_dispatch_args)
+
+    def bench_once(buffer):
+        session, _ = make_dispatch_session()
+        cloned_args = clone_dispatch_args(session)
         torch.cuda.synchronize()
         dispatch_start = torch.cuda.Event(enable_timing=True)
         dispatch_end = torch.cuda.Event(enable_timing=True)
@@ -287,19 +289,19 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
         dispatch_end.record()
 
         combine_start.record()
-        buffer.combine(recv_x, handle, topk_weights=recv_topk_weights, config=base_dispatch_args['config'])
+        buffer.combine(recv_x, handle, topk_weights=recv_topk_weights, config=session['config'])
         combine_end.record()
         torch.cuda.synchronize()
         dispatch_ms = dispatch_start.elapsed_time(dispatch_end)
         combine_ms = combine_start.elapsed_time(combine_end)
         return dispatch_ms, combine_ms
 
-    def benchmark_buffer(name: str, buffer, base_dispatch_args, *, num_warmups: int = 1, num_iters: int = 5):
+    def benchmark_buffer(name: str, buffer, *, num_warmups: int = 1, num_iters: int = 5):
         if buffer is None:
             return None
         for _ in range(num_warmups):
-            bench_once(buffer, base_dispatch_args)
-        times = [bench_once(buffer, base_dispatch_args) for _ in range(num_iters)]
+            bench_once(buffer)
+        times = [bench_once(buffer) for _ in range(num_iters)]
         dispatch_times = [t[0] for t in times]
         combine_times = [t[1] for t in times]
         stats = {
@@ -391,8 +393,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
 
     dist.barrier()
-    deep_perf = benchmark_buffer('DeepEP', buffer_deep, dispatch_args)
-    mori_perf = benchmark_buffer('MORI', buffer_mori, dispatch_args)
+    deep_perf = benchmark_buffer('DeepEP', buffer_deep)
+    mori_perf = benchmark_buffer('MORI', buffer_mori)
     dist.barrier()
     if rank == 0 and deep_perf and mori_perf:
         dispatch_ratio = mori_perf['dispatch_avg_ms'] / max(deep_perf['dispatch_avg_ms'], 1e-6)
