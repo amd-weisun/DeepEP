@@ -143,8 +143,16 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             'async_finish': False,
         }
 
+    def reset_low_latency_buffer(buffer):
+        if buffer is None:
+            return
+        clean_fn = getattr(buffer, 'clean_low_latency_buffer', None)
+        if callable(clean_fn):
+            clean_fn(num_tokens, hidden, num_experts)
+
     def bench_once(buffer):
         inputs = clone_low_latency_inputs()
+        reset_low_latency_buffer(buffer)
         torch.cuda.synchronize()
         dispatch_start = torch.cuda.Event(enable_timing=True)
         dispatch_end = torch.cuda.Event(enable_timing=True)
@@ -152,10 +160,18 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         combine_end = torch.cuda.Event(enable_timing=True)
 
         dispatch_start.record()
+        dispatch_kwargs = dict(
+            x=inputs['x'],
+            topk_idx=inputs['topk_idx'],
+            num_tokens=inputs['num_tokens'],
+            num_experts=inputs['num_experts'],
+            use_fp8=inputs['use_fp8'],
+            async_finish=inputs['async_finish'],
+        )
+        if isinstance(buffer, mori.Buffer):
+            dispatch_kwargs['topk_weights'] = inputs['topk_weights']
         packed_recv_x, packed_recv_count, handle, event, hook = \
-            buffer.low_latency_dispatch(inputs['x'], inputs['topk_idx'], inputs['num_tokens'],
-                                        inputs['num_experts'], use_fp8=inputs['use_fp8'],
-                                        async_finish=inputs['async_finish'])
+            buffer.low_latency_dispatch(**dispatch_kwargs)
         dispatch_end.record()
 
         combine_start.record()
