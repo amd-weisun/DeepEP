@@ -64,15 +64,15 @@ PRESET_SETTINGS = [
     #     'log_values': False,
     # },
 
-    {
-        'name': 'setting_2_2',
-        'num_tokens': 64,
-        'hidden': 7168,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 42,
-        'log_values': False,
-    },
+    # {
+    #     'name': 'setting_2_2',
+    #     'num_tokens': 64,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 42,
+    #     'log_values': False,
+    # },
     {
         'name': 'setting_2',
         'num_tokens': 128,
@@ -284,7 +284,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                               max_num_inp_token_per_rank=num_tokens,
                               num_experts_per_token=num_topk,
                               gpu_per_node=num_local_ranks,
-                              reorder = False)
+                              reorder = True)
 
     device = torch.device('cuda', torch.cuda.current_device())
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
