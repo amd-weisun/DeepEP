@@ -82,6 +82,15 @@ PRESET_SETTINGS = [
         'seed': 42,
         'log_values': True,
     },
+    {
+        'name': 'setting_2a_debug',
+        'num_tokens': 128,
+        'hidden': 128,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': True,
+    },
     # {
     #     'name': 'setting_3',
     #     'num_tokens': 2048,
