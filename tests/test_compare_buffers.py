@@ -259,7 +259,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
 
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
-
+        print(f"[info] group.rank()={group.rank()} , group.size()={group.size()} ", flush=True)
     buffer_deep = deep_ep.Buffer(group, int(1e9), 0, low_latency_mode=False,
                                  num_qps_per_rank=num_experts // num_ranks)
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,

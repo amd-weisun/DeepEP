@@ -116,6 +116,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
 
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks} ", flush=True)
+        print(f"[info] group.rank()={group.rank()} , group.size()={group.size()} ", flush=True)
 
 
     buffer_deep = None
