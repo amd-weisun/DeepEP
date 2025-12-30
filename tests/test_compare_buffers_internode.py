@@ -283,6 +283,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     num_topk = setting['num_topk']
     log_values = setting.get('log_values', True)
 
+    num_nodes = int(os.getenv('WORLD_SIZE', 2))
+
     tensor_dumper: Optional[AsyncTensorDump] = None
     if run_path == 'both':
         sanitized_name = setting['name'].replace(' ', '_')
@@ -292,7 +294,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
 
-    buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
+    buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=1)
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
                               num_qps_per_rank=max(num_experts // num_ranks, 1),
