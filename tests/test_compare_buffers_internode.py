@@ -314,8 +314,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
 
-    even_expert_ids = torch.arange(0, num_experts, step=(num_experts/num_ranks)*2, dtype=torch.long, device='cuda')
-    topk_idx = even_expert_ids.unsqueeze(0).expand(num_tokens, num_topk).contiguous()
+    topk_ids = torch.randperm(num_experts, device='cuda')[:num_topk]
+    topk_idx = topk_ids.unsqueeze(0).expand(num_tokens, num_topk).contiguous()
      
     # token_basis = torch.arange(num_tokens, device='cuda') % num_experts
     # increment = torch.arange(num_topk, device='cuda').unsqueeze(0)
