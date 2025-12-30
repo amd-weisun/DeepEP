@@ -111,9 +111,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     log_values = setting.get('log_values', True)
     run_deep = run_path in ('deep', 'both')
     run_mori = run_path in ('mori', 'both')
+    num_nodes = int(os.getenv('WORLD_SIZE', 2))
 
     if rank == 0:
-        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks} ", flush=True)
 
 
     buffer_deep = None

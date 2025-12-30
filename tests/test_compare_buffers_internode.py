@@ -301,7 +301,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         tensor_dumper = AsyncTensorDump(dump_file)
 
     if rank == 0:
-        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}", flush=True)
 
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=1)
