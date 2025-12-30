@@ -101,6 +101,16 @@ PRESET_SETTINGS = [
         'log_values': False,
         'num_processes': 8,
     },
+    {
+        'name': 'setting_4_debug',
+        'num_tokens': 4096,
+        'hidden': 7168,
+        'num_topk': 4,
+        'num_experts': 256,
+        'seed': 49,
+        'log_values': False,
+        'num_processes': 8,
+    },
 ]
 
 
