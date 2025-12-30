@@ -119,6 +119,12 @@ class AsyncTensorDump:
         lines = _tensor_rows_as_lines(tensor)
         self._queue.put((label, context, lines))
 
+    def log_orderless_tensor(self, label: str, tensor: torch.Tensor, context: str = ''):
+        if tensor is None:
+            return
+        lines = _tensor_orderless_lines(tensor)
+        self._queue.put((label, context, lines))
+
     def close(self):
         self._queue.put(None)
         self._thread.join()
@@ -156,6 +162,12 @@ def _tensor_rows_as_lines(tensor: torch.Tensor) -> list[str]:
     for row in tens:
         lines.append(_format_row_for_logging(row.tolist()))
     return lines
+
+
+def _tensor_orderless_lines(tensor: torch.Tensor) -> list[str]:
+    mat = tensor.float().reshape(tensor.size(0), -1)
+    sorted_sums = torch.sort(mat.sum(dim=1))[0]
+    return [f'{row.item():.6f}' for row in sorted_sums]
 
 
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
@@ -376,7 +388,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         if not recv_match and tensor_dumper is not None:
             context = f"{setting['name']} rank{rank} recv_x"
             tensor_dumper.log_tensor('recv_x/deep_ep', deep_recv_x.float(), context)
+            tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
             tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
+            tensor_dumper.log_orderless_tensor('recv_x/mori_orderless', mori_recv_x.float(), context)
         mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
     elif rank == 0:
         print(f'[info] Running only {"DeepEP" if run_deep else "MORI"} path; skipping cross-checks.', flush=True)
@@ -397,7 +411,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         if not combined_match and tensor_dumper is not None:
             context = f"{setting['name']} rank{rank} combined_x"
             tensor_dumper.log_tensor('combined_x/deep_ep', deep_combined_x.float(), context)
+            tensor_dumper.log_orderless_tensor('combined_x/deep_ep_orderless', deep_combined_x.float(), context)
             tensor_dumper.log_tensor('combined_x/mori', mori_combined_x.float(), context)
+            tensor_dumper.log_orderless_tensor('combined_x/mori_orderless', mori_combined_x.float(), context)
         mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
 
     dist.barrier()
