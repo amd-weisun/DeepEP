@@ -165,9 +165,12 @@ def _tensor_rows_as_lines(tensor: torch.Tensor) -> list[str]:
 
 
 def _tensor_orderless_lines(tensor: torch.Tensor) -> list[str]:
-    mat = tensor.float().reshape(tensor.size(0), -1)
-    sorted_sums = torch.sort(mat.sum(dim=1))[0]
-    return [f'{row.item():.6f}' for row in sorted_sums]
+    mat = tensor.detach().float()
+    if mat.ndim == 0:
+        return [f'{mat.item():.6f}']
+    first_col = mat.reshape(mat.size(0), -1)[:, 0]
+    sorted_vals = torch.sort(first_col)[0]
+    return [f'{row.item():.6f}' for row in sorted_vals]
 
 
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
@@ -388,8 +391,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         if not recv_match and tensor_dumper is not None:
             context = f"{setting['name']} rank{rank} recv_x"
             tensor_dumper.log_tensor('recv_x/deep_ep', deep_recv_x.float(), context)
-            tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
             tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
+            tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
             tensor_dumper.log_orderless_tensor('recv_x/mori_orderless', mori_recv_x.float(), context)
         mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
     elif rank == 0:
