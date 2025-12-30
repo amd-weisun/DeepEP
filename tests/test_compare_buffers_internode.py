@@ -64,15 +64,15 @@ PRESET_SETTINGS = [
     #     'log_values': False,
     # },
 
-    # {
-    #     'name': 'setting_2_2',
-    #     'num_tokens': 64,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 42,
-    #     'log_values': False,
-    # },
+    {
+        'name': 'setting_2_2',
+        'num_tokens': 64,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': False,
+    },
     {
         'name': 'setting_2',
         'num_tokens': 128,
