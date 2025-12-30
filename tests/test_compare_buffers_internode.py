@@ -77,7 +77,7 @@ PRESET_SETTINGS = [
         'name': 'setting_2',
         'num_tokens': 128,
         'hidden': 128,
-        'num_topk': 16,
+        'num_topk': 8,
         'num_experts': 256,
         'seed': 42,
         'log_values': True,
@@ -310,8 +310,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     # x = x_pure_rand
-    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
+    even_expert_ids = torch.arange(0, num_topk * 2, step=2, dtype=torch.long, device='cuda')
+    topk_idx = even_expert_ids.unsqueeze(0).expand(num_tokens, num_topk).contiguous()
      
     # token_basis = torch.arange(num_tokens, device='cuda') % num_experts
     # increment = torch.arange(num_topk, device='cuda').unsqueeze(0)
