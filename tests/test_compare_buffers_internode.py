@@ -1,5 +1,9 @@
 import argparse
+import datetime
+import math
 import os
+import queue
+import threading
 from typing import Optional
 
 import deep_ep
@@ -97,6 +101,61 @@ PRESET_SETTINGS = [
     #     'log_values': False,
     # },
 ]
+
+
+class AsyncTensorDump:
+    def __init__(self, file_path: str):
+        directory = os.path.dirname(file_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        self._file_path = file_path
+        self._queue: queue.Queue = queue.Queue()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def log_tensor(self, label: str, tensor: torch.Tensor, context: str = ''):
+        if tensor is None:
+            return
+        lines = _tensor_rows_as_lines(tensor)
+        self._queue.put((label, context, lines))
+
+    def close(self):
+        self._queue.put(None)
+        self._thread.join()
+
+    def _worker(self):
+        with open(self._file_path, 'a') as handle:
+            while True:
+                item = self._queue.get()
+                if item is None:
+                    break
+                label, context, lines = item
+                timestamp = datetime.datetime.utcnow().isoformat()
+                prefix = f'[{timestamp}] {context} {label}\n'
+                handle.write(prefix)
+                handle.write('\n'.join(lines))
+                handle.write('\n---\n')
+
+
+def _format_row_for_logging(row: list[float]) -> str:
+    if not row:
+        return ''
+    first = float(row[0])
+    if len(row) > 1 and all(math.isclose(float(val), first, rel_tol=1e-6, abs_tol=1e-6) for val in row[1:]):
+        return f'{first:.6f}'
+    return ' '.join(f'{float(val):.6f}' for val in row)
+
+
+def _tensor_rows_as_lines(tensor: torch.Tensor) -> list[str]:
+    tens = tensor.detach().cpu()
+    if tens.ndim == 0:
+        return [f'{tens.item():.6f}']
+    if tens.ndim == 1:
+        return [_format_row_for_logging(tens.tolist())]
+    lines: list[str] = []
+    for row in tens:
+        lines.append(_format_row_for_logging(row.tolist()))
+    return lines
 
 
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
@@ -209,6 +268,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     num_topk = setting['num_topk']
     log_values = setting.get('log_values', True)
 
+    tensor_dumper: Optional[AsyncTensorDump] = None
+    if run_path == 'both':
+        sanitized_name = setting['name'].replace(' ', '_')
+        dump_file = os.path.join('logs', 'internode', f'{sanitized_name}_{run_path}_rank{rank}.log')
+        tensor_dumper = AsyncTensorDump(dump_file)
+
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}", flush=True)
 
@@ -305,7 +370,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                     print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
                     print('  mori  :', mori_topk_idx.cpu(), flush=True)
 
-        mismatch |= not warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
+        recv_match = warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
+        mismatch |= not recv_match
+        if not recv_match and tensor_dumper is not None:
+            context = f"{setting['name']} rank{rank} recv_x"
+            tensor_dumper.log_tensor('recv_x/deep_ep', deep_recv_x.float(), context)
+            tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
         mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
     elif rank == 0:
         print(f'[info] Running only {"DeepEP" if run_deep else "MORI"} path; skipping cross-checks.', flush=True)
@@ -321,7 +391,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                                                                          config=config)
 
     if run_deep and run_mori:
-        mismatch |= not warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
+        combined_match = warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
+        mismatch |= not combined_match
+        if not combined_match and tensor_dumper is not None:
+            context = f"{setting['name']} rank{rank} combined_x"
+            tensor_dumper.log_tensor('combined_x/deep_ep', deep_combined_x.float(), context)
+            tensor_dumper.log_tensor('combined_x/mori', mori_combined_x.float(), context)
         mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
 
     dist.barrier()
@@ -335,6 +410,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             print('Dispatch/combine finished for the selected path.', flush=True)
 
     dist.destroy_process_group()
+    if tensor_dumper is not None:
+        tensor_dumper.close()
 
 
 def main():
