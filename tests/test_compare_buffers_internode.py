@@ -148,10 +148,8 @@ def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-
         print(f'[info] {name} tensor deep_ep shape {tuple(a.shape)}', flush=True)
         print(f'[info] {name} tensor mori shape {tuple(b.shape)}', flush=True)
         if log_values:
-            print_rows_with_column_ellipsis(a.cpu(),20)
-            print_rows_with_column_ellipsis(b.cpu(),20)
-            # print(a.cpu(), flush=True)
-            # print(b.cpu(), flush=True)
+            print(a.cpu(), flush=True)
+            print(b.cpu(), flush=True)
         else:
             print(f'[info] {name} tensor values suppressed (log_values False).', flush=True)
     return same
@@ -197,21 +195,6 @@ def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.T
     masked = topk_weights.clone()
     masked[~local_mask] = 0
     return masked
-
-def print_rows_with_column_ellipsis(t: torch.Tensor, max_cols=16):
-    t = t.detach().cpu()
-    n, m = t.shape
-    left_n = max_cols // 2
-    right_n = max_cols - left_n
-    for i in range(n):
-        if m <= max_cols:
-            print(t[i])
-        else:
-            left = t[i, :left_n]
-            right = t[i, -right_n:]
-            print(torch.cat([left, torch.tensor(float('nan')).repeat(1)], dim=0))  # marker between
-            print("...", end=" ")
-            print(right)
 
 
 
