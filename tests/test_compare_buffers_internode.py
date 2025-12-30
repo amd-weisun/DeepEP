@@ -77,7 +77,7 @@ PRESET_SETTINGS = [
         'name': 'setting_2',
         'num_tokens': 128,
         'hidden': 128,
-        'num_topk': 8,
+        'num_topk': 16,
         'num_experts': 256,
         'seed': 42,
         'log_values': True,
