@@ -41,16 +41,16 @@ PRESET_SETTINGS = [
     #     'log_values': False,
     #     'num_processes': 2,
     # },
-    # {
-    #     'name': 'setting_1',
-    #     'num_tokens': 128,
-    #     'hidden': 4096,
-    #     'num_topk': 8,
-    #     'num_experts': 64,
-    #     'seed': 17,
-    #     'log_values': False,
-    #     'num_processes': 4,
-    # },
+    {
+        'name': 'setting_1',
+        'num_tokens': 128,
+        'hidden': 4096,
+        'num_topk': 8,
+        'num_experts': 64,
+        'seed': 17,
+        'log_values': False,
+        'num_processes': 4,
+    },
     {
         'name': 'setting_2',
         'num_tokens': 128,
@@ -263,10 +263,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
     buffer_deep = deep_ep.Buffer(group, int(1e9), 0, low_latency_mode=False,
                                  num_qps_per_rank=num_experts // num_ranks)
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=num_experts // num_ranks,
-                              max_num_inp_token_per_rank=num_tokens,
-                              num_experts_per_token=num_topk,
-                              gpu_per_node=num_local_ranks)
+                              num_qps_per_rank=num_experts // num_ranks)
 
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
