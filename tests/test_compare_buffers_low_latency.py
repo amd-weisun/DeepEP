@@ -130,10 +130,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     buffer_mori = None
     if run_mori:
         buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=True,
-                                  num_qps_per_rank=num_experts // num_ranks,
-                                  max_num_inp_token_per_rank=num_tokens,
-                                  num_experts_per_token=num_topk,
-                                  gpu_per_node=num_local_ranks)
+                                  num_qps_per_rank=num_experts // num_ranks)
 
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
