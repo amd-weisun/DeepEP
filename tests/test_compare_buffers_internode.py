@@ -195,6 +195,34 @@ def _round_up_num_experts(base: int, num_ranks: int) -> int:
     per_rank = max((base + num_ranks - 1) // num_ranks, 1)
     return per_rank * num_ranks
 
+def _build_all_rank_debug_data(
+    num_ranks: int,
+    num_tokens: int,
+    hidden: int,
+    num_experts: int,
+    num_topk: int,
+    seed: int,
+):
+    total_values = num_ranks * num_tokens * hidden
+    values = torch.arange(total_values, dtype=torch.float32)
+    all_rank_x = values.view(num_ranks, num_tokens, hidden).to(torch.bfloat16)
+
+    rank_topk_idx = []
+    rank_topk_weights = []
+    for rank_id in range(num_ranks):
+        idx_gen = torch.Generator()
+        idx_gen.manual_seed(seed + rank_id * 127 + 1)
+        perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long)
+        topk_idx = perm[:num_topk].unsqueeze(0).expand(num_tokens, num_topk)
+        rank_topk_idx.append(topk_idx)
+
+        weight_gen = torch.Generator()
+        weight_gen.manual_seed(seed + num_ranks + rank_id * 211 + 3)
+        weights = torch.rand((num_tokens, num_topk), generator=weight_gen, dtype=torch.float32)
+        rank_topk_weights.append(weights)
+
+    return torch.stack(rank_topk_idx, dim=0), torch.stack(rank_topk_weights, dim=0), all_rank_x
+
 
 def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: int, num_tokens: int, num_local_ranks: int):
     num_tokens_per_expert = torch.zeros((num_experts,), dtype=torch.int, device=topk_idx.device)
@@ -289,6 +317,16 @@ def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.T
     return masked
 
 
+# def dispatch_reference_cpu(all_rank_x: torch.Tensor,
+#                             local_rank_x: torch.Tensor,
+#                                all_rank_topk_idx: torch.Tensor,
+#                                all_rank_topk_weights: torch.Tensor,
+#                                num_experts: int):   
+#     num_tokens, hidden = local_rank_x.shape
+#     recv_x = torch.zeros((num_experts, hidden), dtype=x.dtype, device='cpu')
+#     recv_topk_idx = torch.full((num_tokens, topk_idx.size(1)), -1, dtype=topk_idx.dtype, device='cpu')
+#     recv_topk_weights = torch.zeros((num_tokens, topk_idx.size(1)), dtype=topk_weights.dtype, device='cpu')
+
 
 
 def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict, run_path: str):
@@ -319,24 +357,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                               num_qps_per_rank=max(num_experts // num_ranks, 1))
 
     device = torch.device('cuda', torch.cuda.current_device())
-    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
-    row_values = (row_values + rank * num_tokens) 
-    
-    x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    # x = x_pure_rand
-
-    # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-    # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-
-    topk_ids = torch.randperm(num_experts, device='cuda')[:num_topk]
-    topk_idx = topk_ids.unsqueeze(0).expand(num_tokens, num_topk).contiguous()
-     
-    # token_basis = torch.arange(num_tokens, device='cuda') % num_experts
-    # increment = torch.arange(num_topk, device='cuda').unsqueeze(0)
-    # topk_idx = (token_basis.unsqueeze(1) + increment) % num_experts
-
-    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda')
+    all_rank_topk_idx, all_rank_topk_weights, all_rank_x = _build_all_rank_debug_data(
+        num_ranks, num_tokens, hidden, num_experts, num_topk, setting.get('seed', 0)
+    )
+    local_x = all_rank_x[rank].to(device)
+    topk_idx = all_rank_topk_idx[rank].to(device)
+    topk_weights = all_rank_topk_weights[rank].to(device)
 
     num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
         topk_idx, num_experts, num_ranks, num_tokens, num_local_ranks)
@@ -344,7 +370,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
     dispatch_args = {
-        'x': x,
+        'x': local_x,
         'num_tokens_per_rank': num_tokens_per_rank,
         'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
         'is_token_in_rank': is_token_in_rank,
@@ -415,11 +441,19 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
             tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
             tensor_dumper.log_orderless_tensor('recv_x/mori_orderless', mori_recv_x.float(), context)
+            # if rank == 0:
+            #     tensor_dumper.log_tensor('all_rank_x', all_rank_x.float(), context)
+            #     tensor_dumper.log_tensor('all_rank_topk_idx', all_rank_topk_idx.to(torch.float32), context)
+            #     tensor_dumper.log_tensor('all_rank_topk_weights', all_rank_topk_weights, context)
         mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
     elif rank == 0:
         print(f'[info] Running only {"DeepEP" if run_deep else "MORI"} path; skipping cross-checks.', flush=True)
 
     torch.cuda.synchronize()
+    dispatch_indices = mori_handle[0]
+    if rank == 0:
+        print(f'[info]dispatch_indices shape: {dispatch_indices.shape}', flush=True)
+    
     if run_deep:
         deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
                                                                         topk_weights=deep_topk_weights,
