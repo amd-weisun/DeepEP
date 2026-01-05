@@ -204,7 +204,7 @@ def _build_all_rank_debug_data(
     seed: int,
     device: torch.device = torch.device('cpu'),
 ):
-    # total_values = num_ranks * num_tokens * hidden
+    total_values = num_ranks * num_tokens * hidden
     # values = torch.arange(total_values, dtype=torch.float32, device=device)
 
     data_gen = torch.Generator(device=device)
