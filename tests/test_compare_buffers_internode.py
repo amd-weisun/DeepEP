@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from utils import init_dist, inplace_unique
+from utils import init_dist, inplace_unique, create_grouped_scores
 
 
 NUM_SMs = 8
@@ -204,9 +204,10 @@ def _build_all_rank_debug_data(
     seed: int,
     device: torch.device = torch.device('cpu'),
 ):
+    num_nodes = int(os.getenv('WORLD_SIZE', 2))
     total_values = num_ranks * num_tokens * hidden
     # values = torch.arange(total_values, dtype=torch.float32, device=device)
-
+    
     data_gen = torch.Generator(device=device)
     data_gen.manual_seed(seed + num_ranks)
     values = torch.rand(total_values, dtype=torch.float32, device=device, generator=data_gen)
@@ -219,8 +220,16 @@ def _build_all_rank_debug_data(
         idx_gen.manual_seed(seed + rank_id * 127 + 1)
         # perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long,  device=device)
         # topk_idx = perm[:num_topk].unsqueeze(0).expand(num_tokens, num_topk)
-        scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device=device,generator=data_gen).abs() + 1
-        topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+        # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device=device,generator=data_gen).abs() + 1
+        # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+
+        scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+        group_scores = scores.view(num_tokens, num_nodes, -1).amax(dim=-1)
+        group_idx = torch.topk(group_scores, k=num_topk_groups, dim=-1, sorted=False).indices
+        masked_scores = create_grouped_scores(scores, group_idx, num_nodes)
+        topk_idx = torch.topk(masked_scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+
+        
         rank_topk_idx.append(topk_idx)
 
         weight_gen = torch.Generator(device=device)
