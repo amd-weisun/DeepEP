@@ -485,6 +485,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     dispatch_indices = mori_handle[0]
     if rank == 0:
         print(f'[info]dispatch_indices shape: {dispatch_indices.shape}', flush=True)
+        print(f'[info]topk_idx shape: {topk_idx.shape}', flush=True)
     
     if run_deep:
         deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
