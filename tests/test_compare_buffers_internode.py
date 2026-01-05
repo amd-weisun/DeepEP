@@ -80,7 +80,7 @@ PRESET_SETTINGS = [
         'num_topk': 8,
         'num_experts': 16,
         'seed': 42,
-        'log_values': False,
+        'log_values': True,
     },
     {
         'name': 'setting_2a_debug',
