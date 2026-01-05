@@ -355,29 +355,29 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                               num_qps_per_rank=max(num_experts // num_ranks, 1))
 
     
-    # device = torch.device('cuda', torch.cuda.current_device())
-    # all_rank_topk_idx, all_rank_topk_weights, all_rank_x = _build_all_rank_debug_data(
-    #     num_ranks, num_tokens, hidden, num_experts, num_topk, setting.get('seed', 0)
-    # )
-    # local_x = all_rank_x[rank].to(device)
-    # topk_idx = all_rank_topk_idx[rank].to(device)
-    # topk_weights = all_rank_topk_weights[rank].to(device)
+    device = torch.device('cuda', torch.cuda.current_device())
+    all_rank_topk_idx, all_rank_topk_weights, all_rank_x = _build_all_rank_debug_data(
+        num_ranks, num_tokens, hidden, num_experts, num_topk, setting.get('seed', 0)
+    )
+    local_x = all_rank_x[rank].to(device)
+    topk_idx = all_rank_topk_idx[rank].to(device)
+    topk_weights = all_rank_topk_weights[rank].to(device)
 
     # Data generation
-    torch.manual_seed(setting.get('seed', 0))
-    torch.cuda.manual_seed_all(setting.get('seed', 0))
+    # torch.manual_seed(setting.get('seed', 0))
+    # torch.cuda.manual_seed_all(setting.get('seed', 0))
 
-    device = torch.device('cuda', torch.cuda.current_device())
+    # device = torch.device('cuda', torch.cuda.current_device())
     
    
 
-    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
-    row_values = row_values + rank * num_tokens
-    # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
+    # row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
+    # row_values = row_values + rank * num_tokens
+    # # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
+    # local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+    # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+    # topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
 
 
     num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
