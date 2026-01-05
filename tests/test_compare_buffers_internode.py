@@ -218,8 +218,12 @@ def _build_all_rank_debug_data(
     for rank_id in range(num_ranks):
         idx_gen = torch.Generator(device=device)
         idx_gen.manual_seed(seed + rank_id * 127 + 1)
-        perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long,  device=device)
-        topk_idx = perm[:num_topk].unsqueeze(0).expand(num_tokens, num_topk)
+        topk_idx = torch.empty((num_tokens, num_topk), dtype=torch.long, device=device)
+        for token_id in range(num_tokens):
+            token_gen = torch.Generator(device=device)
+            token_gen.manual_seed(seed + rank_id * 127 + token_id * 31 + 1)
+            perm = torch.randperm(num_experts, generator=token_gen, dtype=torch.long, device=device)
+            topk_idx[token_id] = perm[:num_topk]
         # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device=device,generator=data_gen).abs() + 1
         # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
 
