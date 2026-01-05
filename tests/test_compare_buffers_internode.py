@@ -218,17 +218,17 @@ def _build_all_rank_debug_data(
     for rank_id in range(num_ranks):
         idx_gen = torch.Generator(device=device)
         idx_gen.manual_seed(seed + rank_id * 127 + 1)
-        # perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long,  device=device)
-        # topk_idx = perm[:num_topk].unsqueeze(0).expand(num_tokens, num_topk)
+        perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long,  device=device)
+        topk_idx = perm[:num_topk].unsqueeze(0).expand(num_tokens, num_topk)
         # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device=device,generator=data_gen).abs() + 1
         # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
 
-        scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-        group_scores = scores.view(num_tokens, num_nodes, -1).amax(dim=-1)
-        num_topk_groups = min(num_nodes, 4)
-        group_idx = torch.topk(group_scores, k=num_topk_groups, dim=-1, sorted=False).indices
-        masked_scores = create_grouped_scores(scores, group_idx, num_nodes)
-        topk_idx = torch.topk(masked_scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+        # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+        # group_scores = scores.view(num_tokens, num_nodes, -1).amax(dim=-1)
+        # num_topk_groups = min(num_nodes, 4)
+        # group_idx = torch.topk(group_scores, k=num_topk_groups, dim=-1, sorted=False).indices
+        # masked_scores = create_grouped_scores(scores, group_idx, num_nodes)
+        # topk_idx = torch.topk(masked_scores, num_topk, dim=-1, largest=True, sorted=False)[1]
 
 
         rank_topk_idx.append(topk_idx)
@@ -406,6 +406,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         'config': config,
         'async_finish': False,
     }
+    if rank == 0 and log_values:
+        print(f'[debug] rank {rank} topk_idx = {topk_idx}:', flush=True)
 
     run_deep = run_path in ('deep', 'both')
     run_mori = run_path in ('mori', 'both')
