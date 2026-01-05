@@ -202,23 +202,23 @@ def _build_all_rank_debug_data(
     num_experts: int,
     num_topk: int,
     seed: int,
+    device: torch.device = torch.device('cpu'),
 ):
     total_values = num_ranks * num_tokens * hidden
-    values = torch.arange(total_values, dtype=torch.float32)
+    values = torch.arange(total_values, dtype=torch.float32, device=device)
     all_rank_x = values.view(num_ranks, num_tokens, hidden).to(torch.bfloat16)
-
     rank_topk_idx = []
     rank_topk_weights = []
     for rank_id in range(num_ranks):
-        idx_gen = torch.Generator()
+        idx_gen = torch.Generator(device=device)
         idx_gen.manual_seed(seed + rank_id * 127 + 1)
-        perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long)
+        perm = torch.randperm(num_experts, generator=idx_gen, dtype=torch.long,  device=device)
         topk_idx = perm[:num_topk].unsqueeze(0).expand(num_tokens, num_topk)
         rank_topk_idx.append(topk_idx)
 
-        weight_gen = torch.Generator()
+        weight_gen = torch.Generator(device=device)
         weight_gen.manual_seed(seed + num_ranks + rank_id * 211 + 3)
-        weights = torch.rand((num_tokens, num_topk), generator=weight_gen, dtype=torch.float32)
+        weights = torch.rand((num_tokens, num_topk), generator=weight_gen, dtype=torch.float32, device=device)
         rank_topk_weights.append(weights)
 
     return torch.stack(rank_topk_idx, dim=0), torch.stack(rank_topk_weights, dim=0), all_rank_x
