@@ -224,16 +224,6 @@ def _build_all_rank_debug_data(
             token_gen.manual_seed(seed + rank_id * 127 + token_id * 31 + 1)
             perm = torch.randperm(num_experts, generator=token_gen, dtype=torch.long, device=device)
             topk_idx[token_id] = perm[:num_topk]
-        # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device=device,generator=data_gen).abs() + 1
-        # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-
-        # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-        # group_scores = scores.view(num_tokens, num_nodes, -1).amax(dim=-1)
-        # num_topk_groups = min(num_nodes, 4)
-        # group_idx = torch.topk(group_scores, k=num_topk_groups, dim=-1, sorted=False).indices
-        # masked_scores = create_grouped_scores(scores, group_idx, num_nodes)
-        # topk_idx = torch.topk(masked_scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-
 
         rank_topk_idx.append(topk_idx)
 
