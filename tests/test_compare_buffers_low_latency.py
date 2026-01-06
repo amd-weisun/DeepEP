@@ -224,7 +224,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                              use_fp8=use_fp8, async_finish=False)
         deep_src_info = deep_handle[0]
         if rank == 0:
-            print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.cpu(),shape}", flush=True)
+            print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.shape}", flush=True)
             print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
 
     
@@ -237,8 +237,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                             
         mori_src_info = deep_handle[0]
         if rank == 0:
-            print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.cpu(),shape}", flush=True)
-            print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
+            print(f"[debug] DeepEP low-latency dispatch src_info shape: {mori_src_info.shape}", flush=True)
+            print(f"[debug] DeepEP low-latency dispatch src_info: {mori_src_info.cpu()}", flush=True)
 
     mismatch = False
     
