@@ -289,11 +289,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             if count > 0:
                 deep_data = deep_src_info[i, :count]
                 mori_data = mori_src_info[i, :count]
-                deep_idx = _lex_argsort(deep_data)
-                mori_idx = _lex_argsort(mori_data)
+                deep_data_sorted = torch.argsort(deep_data, stable=True)
+                mori_data_sorted = torch.argsort(mori_data, stable=True)
                 
-                deep_data_sorted = deep_data[deep_idx]
-                mori_data_sorted = mori_data[mori_idx]
                 if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-2, rtol=1e-2):
                     if rank == 0:
                         print(f"[warning] src_info mismatch at expert {i}", flush=True)
