@@ -143,7 +143,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     row_values = (row_values + rank * num_tokens) * 0.1
     x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
     x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    # x = x_pure_rand
+    x = x_pure_rand
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
@@ -223,7 +223,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             buffer_deep.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
                                              use_fp8=use_fp8, async_finish=False)
         deep_src_info = deep_handle[0]
-        if rank == 0 and log_values:
+        if rank == 0:
             print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.cpu(),shape}", flush=True)
             print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
 
@@ -236,7 +236,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                              use_fp8=use_fp8, async_finish=False, topk_weights=topk_weights)
                                             
         mori_src_info = deep_handle[0]
-        if rank == 0 and log_values:
+        if rank == 0:
             print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.cpu(),shape}", flush=True)
             print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
 
