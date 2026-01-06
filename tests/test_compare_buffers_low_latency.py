@@ -98,6 +98,15 @@ def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-
     return same
 
 
+def _lex_argsort(matrix: torch.Tensor) -> torch.Tensor:
+    idx = torch.arange(matrix.size(0), device=matrix.device)
+    for col in range(matrix.size(1) - 1, -1, -1):
+        col_vals = matrix[idx, col]
+        perm = torch.argsort(col_vals, stable=True)
+        idx = idx[perm]
+    return idx
+
+
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
     per_rank = max((base + num_ranks - 1) // num_ranks, 1)
     return per_rank * num_ranks
@@ -225,7 +234,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         deep_src_info = deep_handle[0]
         if rank == 0:
             print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.shape}", flush=True)
-            print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
+            # print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
 
     
     # Mori
@@ -237,8 +246,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                             
         mori_src_info = deep_handle[0]
         if rank == 0:
-            print(f"[debug] DeepEP low-latency dispatch src_info shape: {mori_src_info.shape}", flush=True)
-            print(f"[debug] DeepEP low-latency dispatch src_info: {mori_src_info.cpu()}", flush=True)
+            print(f"[debug] MORI low-latency dispatch src_info shape: {mori_src_info.shape}", flush=True)
+            # print(f"[debug] MORI low-latency dispatch src_info: {mori_src_info.cpu()}", flush=True)
 
     mismatch = False
     
@@ -255,8 +264,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                 mori_data = mori_packed_recv_x[i, :count]
                 
                 # Sort for comparison
-                deep_idx = torch.argsort(deep_data[:, 0], stable=True)
-                mori_idx = torch.argsort(mori_data[:, 0], stable=True)
+                deep_idx = _lex_argsort(deep_data)
+                mori_idx = _lex_argsort(mori_data)
                 
                 deep_data_sorted = deep_data[deep_idx]
                 mori_data_sorted = mori_data[mori_idx]
@@ -276,6 +285,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                             print(f"[debug] recv_x expert {i} match.", flush=True)
                             print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
                             print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
+                
     elif rank == 0:
         print(f"[info] skipping cross-buffer dispatch comparison (path={run_path}).", flush=True)
 
