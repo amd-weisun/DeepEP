@@ -286,6 +286,29 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                             print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
                             print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
                 
+            if count > 0:
+                deep_data = deep_src_info[i, :count]
+                mori_data = mori_src_info[i, :count]
+                deep_idx = _lex_argsort(deep_data)
+                mori_idx = _lex_argsort(mori_data)
+                
+                deep_data_sorted = deep_data[deep_idx]
+                mori_data_sorted = mori_data[mori_idx]
+                if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-2, rtol=1e-2):
+                    if rank == 0:
+                        print(f"[warning] src_info mismatch at expert {i}", flush=True)
+                        diff = (deep_data_sorted - mori_data_sorted).abs().max()
+                        print(f"  max diff: {diff}", flush=True)
+                        
+                        print('  deep_ep src_info:', deep_data_sorted.cpu(), flush=True)
+                        print('  mori   src_info:', mori_data_sorted.cpu(), flush=True)
+                    mismatch = True
+                else:
+                    if rank == 0:
+                        if log_values:
+                            print(f"[debug] src_info expert {i} match.", flush=True)
+                            print('  deep_ep src_info:', deep_data_sorted.cpu(), flush=True)
+                            print('  mori   src_info:', mori_data_sorted.cpu(), flush=True)
     elif rank == 0:
         print(f"[info] skipping cross-buffer dispatch comparison (path={run_path}).", flush=True)
 
