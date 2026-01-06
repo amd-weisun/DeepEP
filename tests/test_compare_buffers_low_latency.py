@@ -244,28 +244,28 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                 deep_data = deep_packed_recv_x[i, :count]
                 mori_data = mori_packed_recv_x[i, :count]
                 
-                # Sort for comparison
-                deep_idx = torch.argsort(deep_data[:, 0], stable=True)
-                mori_idx = torch.argsort(mori_data[:, 0], stable=True)
+                # # Sort for comparison
+                # deep_idx = torch.argsort(deep_data[:, 0], stable=True)
+                # mori_idx = torch.argsort(mori_data[:, 0], stable=True)
                 
-                deep_data_sorted = deep_data[deep_idx]
-                mori_data_sorted = mori_data[mori_idx]
+                # deep_data_sorted = deep_data[deep_idx]
+                # mori_data_sorted = mori_data[mori_idx]
                 
-                if not torch.allclose(deep_data_sorted, mori_data_sorted, atol=1e-2, rtol=1e-2):
+                if not torch.allclose(deep_data, mori_data, atol=1e-2, rtol=1e-2):
                     if rank == 0:
                         print(f"[warning] recv_x mismatch at expert {i}", flush=True)
-                        diff = (deep_data_sorted - mori_data_sorted).abs().max()
+                        diff = (deep_data - mori_data).abs().max()
                         print(f"  max diff: {diff}", flush=True)
                         if log_values:
-                            print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
-                            print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
+                            print('  deep_ep recv_x:', deep_data.cpu(), flush=True)
+                            print('  mori   recv_x:', mori_data.cpu(), flush=True)
                     mismatch = True
                 else:
                     if rank == 0:
                         if log_values:
                             print(f"[debug] recv_x expert {i} match.", flush=True)
-                            print('  deep_ep recv_x:', deep_data_sorted.cpu(), flush=True)
-                            print('  mori   recv_x:', mori_data_sorted.cpu(), flush=True)
+                            print('  deep_ep recv_x:', deep_data.cpu(), flush=True)
+                            print('  mori   recv_x:', mori_data.cpu(), flush=True)
     elif rank == 0:
         print(f"[info] skipping cross-buffer dispatch comparison (path={run_path}).", flush=True)
 
