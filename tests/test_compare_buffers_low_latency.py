@@ -222,6 +222,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         deep_packed_recv_x, deep_packed_recv_count, deep_handle, deep_event, deep_hook = \
             buffer_deep.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
                                              use_fp8=use_fp8, async_finish=False)
+        deep_src_info = deep_handle[0]
+        if rank == 0 and log_values:
+            print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.cpu(),shape}", flush=True)
+            print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
+
     
     # Mori
     mori_packed_recv_x = mori_packed_recv_count = mori_handle = None
@@ -229,6 +234,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         mori_packed_recv_x, mori_packed_recv_count, mori_handle, mori_event, mori_hook = \
             buffer_mori.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
                                              use_fp8=use_fp8, async_finish=False, topk_weights=topk_weights)
+                                            
+        mori_src_info = deep_handle[0]
+        if rank == 0 and log_values:
+            print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.cpu(),shape}", flush=True)
+            print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
 
     mismatch = False
     
