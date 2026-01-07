@@ -46,7 +46,7 @@ def per_token_cast_to_fp8(x: torch.Tensor):
     m, n = x.shape
     x_view = x.view(m, -1, 128)
     x_amax = x_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
-    max_range = max(torch.finfo(torch.float8_e4m3fn).max, torch.finfo(torch.float8_e4m3fnuz).max)
+    max_range = min(torch.finfo(torch.float8_e4m3fn).max, torch.finfo(torch.float8_e4m3fnuz).max) 
     return (x_view * (max_range / x_amax.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), (x_amax / max_range).view(m, -1)
 
 
