@@ -25,7 +25,7 @@ PRESET_SETTINGS = [
         'num_topk': 8,
         'num_experts': 16,
         'seed': 42,
-        'log_values': True,
+        'log_values': False,
         'use_fp8' : True,
     },
     {
@@ -38,36 +38,36 @@ PRESET_SETTINGS = [
         'log_values': False,
         'use_fp8' : True,
     },
-    # {
-    #     'name': 'setting_2b_debug',
-    #     'num_tokens': 128,
-    #     'hidden': 256,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 42,
-    #     'log_values': False,
-    #     'use_fp8' : True,
-    # },
-    # {
-    #     'name': 'setting_3',
-    #     'num_tokens': 2048,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 47,
-    #     'log_values': False,
-    #     'use_fp8' : True,
-    # },
-    # {
-    #     'name': 'setting_4',
-    #     'num_tokens': 4096,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 47,
-    #     'log_values': False,
-    #     'use_fp8' : True,
-    # },
+    {
+        'name': 'setting_2b_debug',
+        'num_tokens': 128,
+        'hidden': 256,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 42,
+        'log_values': False,
+        'use_fp8' : True,
+    },
+    {
+        'name': 'setting_3',
+        'num_tokens': 2048,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 47,
+        'log_values': False,
+        'use_fp8' : True,
+    },
+    {
+        'name': 'setting_4',
+        'num_tokens': 4096,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 47,
+        'log_values': False,
+        'use_fp8' : True,
+    },
 ]
 
 
@@ -344,9 +344,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     x_e4m3 = per_token_cast_to_fp8(local_x)
 
     if rank == 0 and use_fp8:
-        print(f"[warning] x_e4m3fn = {x_e4m3[0]}.", flush=True)
-        print(f"[warning] x_e4m3fn float32  = {x_e4m3[0].to(torch.float32)}.", flush=True)
-        print(f"[warning] x_e4m3fnuz  = {x_e4m3[0].to(torch.float8_e4m3fnuz)}.", flush=True)
+        # print(f"[warning] x_e4m3fn = {x_e4m3[0]}.", flush=True)
+        # print(f"[warning] x_e4m3fn float32  = {x_e4m3[0].to(torch.float32)}.", flush=True)
+        # print(f"[warning] x_e4m3fnuz  = {x_e4m3[0].to(torch.float8_e4m3fnuz)}.", flush=True)
         # print(f"[info] x_scales  = {x_e4m3[1]}.", flush=True)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
