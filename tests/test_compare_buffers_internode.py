@@ -332,8 +332,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
     row_values = (row_values + rank * num_tokens) * 0.1
     # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    # local_x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
-    local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    local_x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
+    # local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x_e4m3 = per_token_cast_to_fp8(local_x)
 
     if rank == 0 and use_fp8:
