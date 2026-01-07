@@ -18,39 +18,59 @@ from utils import init_dist, inplace_unique, create_grouped_scores, per_token_ca
 NUM_SMs = 8
 
 PRESET_SETTINGS = [
+    # {
+    #     'name': 'setting_2a_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 16,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_2a_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 32,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_2b_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
     {
-        'name': 'setting_2a_debug',
-        'num_tokens': 128,
-        'hidden': 256,
-        'num_topk': 8,
-        'num_experts': 16,
-        'seed': 42,
-        'log_values': False,
-        'use_fp8' : True,
-    },
-    {
-        'name': 'setting_2a_debug',
-        'num_tokens': 128,
-        'hidden': 256,
-        'num_topk': 8,
-        'num_experts': 32,
-        'seed': 42,
-        'log_values': False,
-        'use_fp8' : True,
-    },
-    {
-        'name': 'setting_2b_debug',
-        'num_tokens': 128,
-        'hidden': 256,
+        'name': 'setting_3',
+        'num_tokens': 2048,
+        'hidden': 7168,
         'num_topk': 8,
         'num_experts': 256,
-        'seed': 42,
+        'seed': 47,
         'log_values': False,
         'use_fp8' : True,
     },
     {
         'name': 'setting_3',
         'num_tokens': 2048,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 47,
+        'log_values': False,
+        'use_fp8' : False,
+    },
+    {
+        'name': 'setting_4',
+        'num_tokens': 4096,
         'hidden': 7168,
         'num_topk': 8,
         'num_experts': 256,
@@ -66,7 +86,7 @@ PRESET_SETTINGS = [
         'num_experts': 256,
         'seed': 47,
         'log_values': False,
-        'use_fp8' : True,
+        'use_fp8' : False,
     },
 ]
 
@@ -309,7 +329,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         tensor_dumper = AsyncTensorDump(dump_file)
 
     if rank == 0:
-        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}", flush=True)
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}, use_fp8 = {use_fp8}", flush=True)
         print(f"[info] group.rank()={group.rank()} , group.size()={group.size()} ", flush=True)
         
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
