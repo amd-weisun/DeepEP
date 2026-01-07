@@ -38,36 +38,36 @@ PRESET_SETTINGS = [
         'log_values': False,
         'use_fp8' : True,
     },
-    {
-        'name': 'setting_2b_debug',
-        'num_tokens': 128,
-        'hidden': 256,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 42,
-        'log_values': False,
-        'use_fp8' : True,
-    },
-    {
-        'name': 'setting_3',
-        'num_tokens': 2048,
-        'hidden': 7168,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 47,
-        'log_values': False,
-        'use_fp8' : True,
-    },
-    {
-        'name': 'setting_4',
-        'num_tokens': 4096,
-        'hidden': 7168,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 47,
-        'log_values': False,
-        'use_fp8' : True,
-    },
+    # {
+    #     'name': 'setting_2b_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_3',
+    #     'num_tokens': 2048,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 47,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_4',
+    #     'num_tokens': 4096,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 47,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
 ]
 
 
@@ -332,7 +332,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
     row_values = (row_values + rank * num_tokens) * 0.1
     # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    local_x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank * 0.1
+    local_x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
     # local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x_e4m3 = per_token_cast_to_fp8(local_x)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
