@@ -373,19 +373,21 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
     def normalize_result(result):
         recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, _ = result
+        recvx_scale = None
         if isinstance(recv_x, tuple):
+            recvx_scale = recv_x[1]
             recv_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
             # recv_x = recv_x[0]
         else:
             recv_x = recv_x
-        return recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
+        return recv_x, recvx_scale, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
 
     deep_recv_x = deep_topk_idx = deep_topk_weights = deep_num_list = deep_handle = None
     mori_recv_x = mori_topk_idx = mori_topk_weights = mori_num_list = mori_handle = None
     if run_deep:
-        deep_recv_x, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
+        deep_recv_x, deep_recvx_scale, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
     if run_mori:
-        mori_recv_x, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
+        mori_recv_x, mori_recvx_scale, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
 
     mismatch = False
     if run_deep and run_mori:
@@ -418,6 +420,14 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 if log_values:
                     print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
                     print('  mori  :', mori_topk_idx.cpu(), flush=True)
+
+        if mori_recvx_scale is not None and deep_recvx_scale is not None:
+            scale_match = warn_allclose('recv_x_scale', deep_recvx_scale, mori_recvx_scale, rank=rank, log_values=log_values)
+            mismatch |= not scale_match
+            # if not scale_match and tensor_dumper is not None:
+            #     context = f"{setting['name']} rank{rank} recv_x_scale"
+            #     tensor_dumper.log_tensor('recv_x_scale/deep_ep', deep_recvx_scale, context)
+            #     tensor_dumper.log_tensor('recv_x_scale/mori', mori_recvx_scale, context)
 
         recv_match = warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
         mismatch |= not recv_match
