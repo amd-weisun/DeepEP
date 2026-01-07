@@ -343,7 +343,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x_e4m3 = per_token_cast_to_fp8(local_x)
 
-    if rank == 0 and use_fp8:
+    # if rank == 0 and use_fp8:
         # print(f"[warning] x_e4m3fn = {x_e4m3[0]}.", flush=True)
         # print(f"[warning] x_e4m3fn float32  = {x_e4m3[0].to(torch.float32)}.", flush=True)
         # print(f"[warning] x_e4m3fnuz  = {x_e4m3[0].to(torch.float8_e4m3fnuz)}.", flush=True)
