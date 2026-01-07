@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8
+from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back
 
 
 NUM_SMs = 8
@@ -330,9 +330,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     # x_e4m3 = per_token_cast_to_fp8(x)
 
     row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
-    row_values = row_values + rank * num_tokens
+    row_values = (row_values + rank * num_tokens) * 0.1
     # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    local_x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank * 0.1
+    # local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
     x_e4m3 = per_token_cast_to_fp8(local_x)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
@@ -368,7 +369,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     def normalize_result(result):
         recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, _ = result
         if isinstance(recv_x, tuple):
-            recv_x = recv_x[0]
+            recv_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
+            # recv_x = recv_x[0]
+        else:
+            recv_x = recv_x
         return recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
 
     deep_recv_x = deep_topk_idx = deep_topk_weights = deep_num_list = deep_handle = None
