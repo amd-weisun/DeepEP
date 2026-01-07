@@ -12,93 +12,41 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from utils import init_dist, inplace_unique, create_grouped_scores
+from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8
 
 
 NUM_SMs = 8
 
 PRESET_SETTINGS = [
-    # {
-    #     'name': 'setting_0',
-    #     'num_tokens': 16,
-    #     'hidden': 256,
-    #     'num_topk': 8,
-    #     'num_experts': 32,
-    #     'seed': 17,
-    #     'log_values': False,
-    # },
-    # {
-    #     'name': 'setting_1',
-    #     'num_tokens': 128,
-    #     'hidden': 4096,
-    #     'num_topk': 8,
-    #     'num_experts': 64,
-    #     'seed': 17,
-    #     'log_values': False,
-    # },
-    # {
-    #     'name': 'setting_1_1',
-    #     'num_tokens': 128,
-    #     'hidden': 4096,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 17,
-    #     'log_values': False,
-    # },
-    # {
-    #     'name': 'setting_2_0',
-    #     'num_tokens': 16,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 42,
-    #     'log_values': False,
-    # },
-    # {
-    #     'name': 'setting_2_1',
-    #     'num_tokens': 32,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 42,
-    #     'log_values': False,
-    # },
-
-    # {
-    #     'name': 'setting_2_2',
-    #     'num_tokens': 64,
-    #     'hidden': 7168,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 42,
-    #     'log_values': False,
-    # },
     {
         'name': 'setting_2a_debug',
         'num_tokens': 128,
-        'hidden': 128,
+        'hidden': 256,
         'num_topk': 8,
         'num_experts': 16,
         'seed': 42,
         'log_values': True,
+        'use_fp8' : True,
     },
     {
         'name': 'setting_2a_debug',
         'num_tokens': 128,
-        'hidden': 128,
+        'hidden': 256,
         'num_topk': 8,
         'num_experts': 32,
         'seed': 42,
         'log_values': False,
+        'use_fp8' : True,
     },
     {
         'name': 'setting_2b_debug',
         'num_tokens': 128,
-        'hidden': 128,
+        'hidden': 256,
         'num_topk': 8,
         'num_experts': 256,
         'seed': 42,
         'log_values': False,
+        'use_fp8' : True,
     },
     {
         'name': 'setting_3',
@@ -108,6 +56,7 @@ PRESET_SETTINGS = [
         'num_experts': 256,
         'seed': 47,
         'log_values': False,
+        'use_fp8' : True,
     },
     {
         'name': 'setting_4',
@@ -117,6 +66,7 @@ PRESET_SETTINGS = [
         'num_experts': 256,
         'seed': 47,
         'log_values': False,
+        'use_fp8' : True,
     },
 ]
 
@@ -202,6 +152,7 @@ def _build_all_rank_debug_data(
     num_experts: int,
     num_topk: int,
     seed: int,
+    use_fp8: bool = False,
     device: torch.device = torch.device('cpu'),
 ):
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
@@ -340,6 +291,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     hidden = setting['hidden']
     num_topk = setting['num_topk']
     log_values = setting.get('log_values', True)
+    use_fp8 = setting.get('use_fp8', False)
 
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
 
@@ -359,29 +311,32 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                               num_qps_per_rank=max(num_experts // num_ranks, 1))
 
     
-    device = torch.device('cuda', torch.cuda.current_device())
-    all_rank_topk_idx, all_rank_topk_weights, all_rank_x = _build_all_rank_debug_data(
-        num_ranks, num_tokens, hidden, num_experts, num_topk, setting.get('seed', 0)
-    )
-    local_x = all_rank_x[rank].to(device)
-    topk_idx = all_rank_topk_idx[rank].to(device)
-    topk_weights = all_rank_topk_weights[rank].to(device)
+    # device = torch.device('cuda', torch.cuda.current_device())
+    # all_rank_topk_idx, all_rank_topk_weights, all_rank_x = _build_all_rank_debug_data(
+    #     num_ranks, num_tokens, hidden, num_experts, num_topk, use_fp8, setting.get('seed', 0)
+    # )
+    # local_x = all_rank_x[rank].to(device)
+    # topk_idx = all_rank_topk_idx[rank].to(device)
+    # topk_weights = all_rank_topk_weights[rank].to(device)
 
     # Data generation
-    # torch.manual_seed(setting.get('seed', 0))
-    # torch.cuda.manual_seed_all(setting.get('seed', 0))
+    torch.manual_seed(setting.get('seed', 0))
+    torch.cuda.manual_seed_all(setting.get('seed', 0))
 
-    # device = torch.device('cuda', torch.cuda.current_device())
-    
-   
+    device = torch.device('cuda', torch.cuda.current_device())
 
-    # row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
-    # row_values = row_values + rank * num_tokens
-    # # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
-    # local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
-    # scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
-    # topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
-    # topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
+    # x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
+    # x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    # x_e4m3 = per_token_cast_to_fp8(x)
+
+    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
+    row_values = row_values + rank * num_tokens
+    # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16)
+    local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    x_e4m3 = per_token_cast_to_fp8(local_x)
+    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
 
 
     num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
@@ -390,7 +345,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
     dispatch_args = {
-        'x': local_x,
+        'x': x_e4m3 if use_fp8 else local_x,
         'num_tokens_per_rank': num_tokens_per_rank,
         'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
         'is_token_in_rank': is_token_in_rank,
