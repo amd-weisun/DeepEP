@@ -119,6 +119,13 @@ def _format_row_for_logging(row: list[float]) -> str:
         return f'{first:.6f}'
     return ' '.join(f'{float(val):.6f}' for val in row)
 
+def _lex_argsort(matrix: torch.Tensor) -> torch.Tensor:
+    idx = torch.arange(matrix.size(0), device=matrix.device)
+    for col in range(matrix.size(1) - 1, -1, -1):
+        col_vals = matrix[idx, col]
+        perm = torch.argsort(col_vals, stable=True)
+        idx = idx[perm]
+    return idx
 
 def _tensor_rows_as_lines(tensor: torch.Tensor) -> list[str]:
     tens = tensor.detach().cpu()
@@ -340,7 +347,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         print(f"[warning] x_e4m3fn = {x_e4m3[0]}.", flush=True)
         print(f"[warning] x_e4m3fn float32  = {x_e4m3[0].to(torch.float32)}.", flush=True)
         print(f"[warning] x_e4m3fnuz  = {x_e4m3[0].to(torch.float8_e4m3fnuz)}.", flush=True)
-        print(f"[info] x_scales  = {x_e4m3[1]}.", flush=True)
+        # print(f"[info] x_scales  = {x_e4m3[1]}.", flush=True)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
@@ -424,7 +431,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
         if mori_recvx_scale is not None and deep_recvx_scale is not None:
             scale_match = warn_allclose('recv_x_scale', deep_recvx_scale, mori_recvx_scale, rank=rank, log_values=log_values)
+
             mismatch |= not scale_match
+            deep_idx = _lex_argsort(deep_recvx_scale)
+            mori_idx = _lex_argsort(mori_recvx_scale)
+
+            orderless_scale_match = warn_allclose('recv_x_scale_orderless', deep_recvx_scale[deep_idx], mori_recvx_scale[mori_idx], rank=rank, log_values=log_values)
             # if not scale_match and tensor_dumper is not None:
             #     context = f"{setting['name']} rank{rank} recv_x_scale"
             #     tensor_dumper.log_tensor('recv_x_scale/deep_ep', deep_recvx_scale, context)
