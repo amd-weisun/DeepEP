@@ -337,11 +337,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     x_e4m3 = per_token_cast_to_fp8(local_x)
 
     if rank == 0 and use_fp8:
-        fp8_max = torch.finfo(torch.float8_e4m3fnuz).max
-        safe_fp32 = x_e4m3[0].to(torch.float32).clamp(0.0, 448 * 0.9999)
         print(f"[warning] x_e4m3fn = {x_e4m3[0]}.", flush=True)
         print(f"[warning] x_e4m3fn float32  = {x_e4m3[0].to(torch.float32)}.", flush=True)
-        print(f"[warning] x_e4m3fnuz  = {safe_fp32.to(torch.float8_e4m3fnuz)}.", flush=True)
+        print(f"[warning] x_e4m3fnuz  = {x_e4m3[0].to(torch.float32).to(torch.float8_e4m3fnuz)}.", flush=True)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
     topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
