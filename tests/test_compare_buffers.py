@@ -325,6 +325,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict):
         recv_x, _, recv_topk_weights, _, handle = normalize_result(result)
         dispatch_end.record()
         torch.cuda.synchronize()
+        dist.barrier()
         combine_start.record()
         buffer.combine(recv_x, handle, topk_weights=recv_topk_weights, config=session['config'])
         combine_end.record()
