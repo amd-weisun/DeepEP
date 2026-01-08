@@ -16,36 +16,17 @@ NUM_SMs = 8
         # case 4096: case_macro(4096); \
         # case 7168: case_macro(7168); \
 PRESET_SETTINGS = [
-    # {
-    #     'name': 'baseline',
-    #     'num_tokens': 8,
-    #     'hidden': 2560,
-    #     'num_topk': 4,
-    #     'num_experts': 16,
-    #     'seed': 0,
-    #     'log_values': False,
-    #     'num_processes': 2,
-    # },
-    # {
-    #     'name': 'setting_0',
-    #     'num_tokens': 64,
-    #     'hidden': 4096,
-    #     'num_topk': 8,
-    #     'num_experts': 128,
-    #     'seed': 29,
-    #     'log_values': False,
-    #     'num_processes': 4,
-    # },
-    # {
-    #     'name': 'setting_1',
-    #     'num_tokens': 64,
-    #     'hidden': 4096,
-    #     'num_topk': 8,
-    #     'num_experts': 256,
-    #     'seed': 31,
-    #     'log_values': False,
-    #     'num_processes': 8,
-    # },
+    {
+        'name': 'setting_1',
+        'num_tokens': 64,
+        'hidden': 4096,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 31,
+        'log_values': False,
+        'num_processes': 8,
+        'use_fp8' : True,
+    },
     {
         'name': 'setting_2_0',
         'num_tokens': 32,
@@ -122,9 +103,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     run_deep = run_path in ('deep', 'both')
     run_mori = run_path in ('mori', 'both')
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
+    use_fp8 = setting.get('use_fp8', False)
 
     if rank == 0:
-        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks} ", flush=True)
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}, use_fp8 = {use_fp8} ", flush=True)
         print(f"[info] group.rank()={group.rank()} , group.size()={group.size()} ", flush=True)
 
 
@@ -233,6 +215,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             buffer_deep.low_latency_dispatch(x, topk_idx, num_tokens, num_experts,
                                              use_fp8=use_fp8, async_finish=False)
         deep_src_info = deep_handle[0]
+        # deep_packed_recv_x = (deep_packed_recv_x[0], deep_packed_recv_x[1].contiguous()) if use_fp8 else deep_packed_recv_x
+        deep_packed_recv_x = per_token_cast_back(deep_packed_recv_x[0].view(-1, hidden), deep_packed_recv_x[1].view(-1, hidden // 128)).view(deep_packed_recv_x[0].shape) \
+                if use_fp8 else deep_packed_recv_x.clone()
         if rank == 0:
             print(f"[debug] DeepEP low-latency dispatch src_info shape: {deep_src_info.shape}", flush=True)
             # print(f"[debug] DeepEP low-latency dispatch src_info: {deep_src_info.cpu()}", flush=True)
@@ -246,6 +231,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                              use_fp8=use_fp8, async_finish=False, topk_weights=topk_weights)
                                             
         mori_src_info = deep_handle[0]
+        # mori_packed_recv_x = (mori_packed_recv_x[0], mori_packed_recv_x[1].contiguous()) if use_fp8 else mori_packed_recv_x
+        mori_packed_recv_x = per_token_cast_back(mori_packed_recv_x[0].view(-1, hidden), mori_packed_recv_x[1].view(-1, hidden // 128)).view(mori_packed_recv_x[0].shape) \
+                if use_fp8 else mori_packed_recv_x.clone()
         if rank == 0:
             print(f"[debug] MORI low-latency dispatch src_info shape: {mori_src_info.shape}", flush=True)
             # print(f"[debug] MORI low-latency dispatch src_info: {mori_src_info.cpu()}", flush=True)
