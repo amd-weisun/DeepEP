@@ -381,7 +381,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1))
+                              num_qps_per_rank=max(num_experts // num_ranks, 1),  block_num=80, rdma_block_num=28)
 
     
     # device = torch.device('cuda', torch.cuda.current_device())
