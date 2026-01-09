@@ -595,11 +595,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         fp8_factor = (1 + 4 / 128) / 2
 
         current_x = dispatch_args['x']
-        nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 8)
-        rdma_chunk_size = setting.get('deepep_dispatch_rdma_chunk_size', 16)
+        nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 20)
+        rdma_chunk_size = setting.get('deepep_dispatch_rdma_chunk_size', 20)
 
         dispatch_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
-        tune_args = {'x': current_x, 'handle': deep_handle, 'config': tune_config}
+        tune_args = {'x': current_x, 'handle': deep_handle, 'config': dispatch_config}
         dispatch_runner = lambda: buffer_deep.dispatch(**tune_args)
 
         combine_nvl_chunk_size = setting.get('deepep_combine_nvl_chunk_size', 1)
