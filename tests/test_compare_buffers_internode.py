@@ -201,11 +201,14 @@ def benchmark_dispatch_combine(dispatch_fn, combine_fn, *, num_warmups: int = 1,
     return dispatch_stats, combine_stats
 
 
-def run_buffer_combine_from_dispatch(buffer, dispatch_out, combine_config, *, fallback_topk_weights=None):
+def run_buffer_combine_from_dispatch(buffer, dispatch_out, combine_config, *, fallback_topk_weights=None, override_handle=None):
     recv_x, _, recv_topk_weights, _, handle, _ = dispatch_out
     combine_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
     topk_weights = recv_topk_weights if recv_topk_weights is not None else fallback_topk_weights
-    combine_kwargs = {'x': combine_x, 'handle': handle, 'config': combine_config}
+    active_handle = handle if handle is not None else override_handle
+    if active_handle is None:
+        raise RuntimeError('combine requires a handle, but none was provided or cached.')
+    combine_kwargs = {'x': combine_x, 'handle': active_handle, 'config': combine_config}
     if topk_weights is not None:
         combine_kwargs['topk_weights'] = topk_weights
     buffer.combine(**combine_kwargs)
@@ -577,7 +580,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                     tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
                     tune_args = {'x': current_x, 'handle': deep_handle, 'config': tune_config}
                     dispatch_runner = lambda ta=tune_args: buffer_deep.dispatch(**ta)
-                    combine_runner = lambda out, cfg=config: run_buffer_combine_from_dispatch(buffer_deep, out, cfg)
+                    combine_runner = lambda out, cfg=config: run_buffer_combine_from_dispatch(
+                        buffer_deep, out, cfg, override_handle=deep_handle)
                     dispatch_stats, _ = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=0, num_iters=1)
                     t = dispatch_stats[0]
                     if t < best_time:
@@ -616,7 +620,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             for rdma_chunk_size in range(8, upper_bound, 4):
                 tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
                 dispatch_runner = lambda: buffer_deep.dispatch(**tuned_dispatch_args)
-                combine_runner = lambda out, cfg=tune_config: run_buffer_combine_from_dispatch(buffer_deep, out, cfg)
+                combine_runner = lambda out, cfg=tune_config: run_buffer_combine_from_dispatch(
+                    buffer_deep, out, cfg, override_handle=deep_handle)
                 _, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=0, num_iters=1)
                 t = combine_stats[0]
                 if t < best_time:
