@@ -586,13 +586,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     combine_bf16_rdma_recv_bytes = dispatch_bf16_rdma_send_bytes
     active_label = 'FP8' if use_fp8 else 'BF16'
 
+    fp8_factor = (1 + 4 / 128) / 2
+    throughput_scale = fp8_factor if use_fp8 else 1.0
+
     if run_deep:
 
-        fp8_factor = (1 + 4 / 128) / 2
-        throughput_scale = fp8_factor if use_fp8 else 1.0
         rdma_bytes = dispatch_bf16_rdma_send_bytes * throughput_scale
         nvl_bytes = dispatch_bf16_nvl_recv_bytes * throughput_scale
-        fp8_factor = (1 + 4 / 128) / 2
 
         current_x = dispatch_args['x']
         nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 20)
@@ -635,8 +635,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         mori_dispatch_time = dispatch_stats[0]
         mori_dispatch_summary = {
             'time': mori_dispatch_time,
-            'rdma_gbps': dispatch_bf16_rdma_send_bytes / 1e9 / mori_dispatch_time,
-            'nvl_gbps': dispatch_bf16_nvl_recv_bytes / 1e9 / mori_dispatch_time,
+            'rdma_gbps': (dispatch_bf16_rdma_send_bytes * throughput_scale) / 1e9 / mori_dispatch_time,
+            'nvl_gbps': (dispatch_bf16_nvl_recv_bytes * throughput_scale) / 1e9 / mori_dispatch_time,
         }
         mori_combine_time = combine_stats[0]
         mori_combine_summary = {
