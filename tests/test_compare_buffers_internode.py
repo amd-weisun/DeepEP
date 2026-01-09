@@ -381,7 +381,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1),  block_num=32, rdma_block_num=28)
+                              num_qps_per_rank=max(num_experts // num_ranks, 1),  block_num=16, rdma_block_num=8)
 
     
     # device = torch.device('cuda', torch.cuda.current_device())
@@ -597,6 +597,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 t = dispatch_stats[0]
                 if t < best_time:
                     best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
+                print(f'[debug] dispatch tuning nvl_chunk_size={nvl_chunk_size}, rdma_chunk_size={rdma_chunk_size}, time={t*1e6:.2f} us', flush=True)
         if local_rank == 0 and best_results is not None:
             print(f'[tuning] Best dispatch ({active_label}): SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}: {rdma_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {nvl_bytes / 1e9 / best_time:.2f} GB/s (NVL)')
             print()
@@ -638,7 +639,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 t = combine_stats[0]
                 if t < best_time:
                     best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
-
+                print(f'[debug] combine tuning nvl_chunk_size={nvl_chunk_size}, rdma_chunk_size={rdma_chunk_size}, time={t*1e6:.2f} us', flush=True)
         if local_rank == 0 and best_results is not None:
             print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}: {combine_bf16_rdma_recv_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL)')
             print()
