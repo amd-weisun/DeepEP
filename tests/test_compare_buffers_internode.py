@@ -168,23 +168,47 @@ def _tensor_orderless_lines(tensor: torch.Tensor) -> list[str]:
     return [f'{row.item():.6f}' for row in sorted_vals]
 
 
-def bench_once(run_fn):
+def _bench_dispatch_and_combine(dispatch_fn, combine_fn):
     torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
-    run_fn()
-    end.record()
+    dispatch_start = torch.cuda.Event(enable_timing=True)
+    dispatch_end = torch.cuda.Event(enable_timing=True)
+    combine_start = torch.cuda.Event(enable_timing=True)
+    combine_end = torch.cuda.Event(enable_timing=True)
+
+    dispatch_start.record()
+    dispatch_out = dispatch_fn()
+    dispatch_end.record()
     torch.cuda.synchronize()
-    return start.elapsed_time(end) / 1e3
+
+    combine_start.record()
+    combine_fn(dispatch_out)
+    combine_end.record()
+    torch.cuda.synchronize()
+
+    dispatch_time = dispatch_start.elapsed_time(dispatch_end) / 1e3
+    combine_time = combine_start.elapsed_time(combine_end) / 1e3
+    return dispatch_time, combine_time
 
 
-def benchmark_kernel(run_fn, *, num_warmups: int = 1, num_iters: int = 5):
+def benchmark_dispatch_combine(dispatch_fn, combine_fn, *, num_warmups: int = 1, num_iters: int = 5):
     for _ in range(num_warmups):
-        bench_once(run_fn)
-    times = [bench_once(run_fn) for _ in range(num_iters)]
-    avg = sum(times) / len(times)
-    return avg, min(times), max(times)
+        _bench_dispatch_and_combine(dispatch_fn, combine_fn)
+    times = [_bench_dispatch_and_combine(dispatch_fn, combine_fn) for _ in range(num_iters)]
+    dispatch_times = [t[0] for t in times]
+    combine_times = [t[1] for t in times]
+    dispatch_stats = (sum(dispatch_times) / len(dispatch_times), min(dispatch_times), max(dispatch_times))
+    combine_stats = (sum(combine_times) / len(combine_times), min(combine_times), max(combine_times))
+    return dispatch_stats, combine_stats
+
+
+def run_buffer_combine_from_dispatch(buffer, dispatch_out, combine_config, *, fallback_topk_weights=None):
+    recv_x, _, recv_topk_weights, _, handle, _ = dispatch_out
+    combine_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
+    topk_weights = recv_topk_weights if recv_topk_weights is not None else fallback_topk_weights
+    combine_kwargs = {'x': combine_x, 'handle': handle, 'config': combine_config}
+    if topk_weights is not None:
+        combine_kwargs['topk_weights'] = topk_weights
+    buffer.combine(**combine_kwargs)
 
 
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
@@ -552,7 +576,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 for rdma_chunk_size in range(4, 33, 4):
                     tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
                     tune_args = {'x': current_x, 'handle': deep_handle, 'config': tune_config}
-                    t, _, _ = benchmark_kernel(lambda: buffer_deep.dispatch(**tune_args), num_warmups=0, num_iters=1)
+                    dispatch_runner = lambda ta=tune_args: buffer_deep.dispatch(**ta)
+                    combine_runner = lambda out, cfg=config: run_buffer_combine_from_dispatch(buffer_deep, out, cfg)
+                    dispatch_stats, _ = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=0, num_iters=1)
+                    t = dispatch_stats[0]
                     if t < best_time:
                         best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
             if local_rank == 0 and best_results is not None:
@@ -578,18 +605,20 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
             'is_token_in_rank': is_token_in_rank,
             'num_tokens_per_expert': num_tokens_per_expert,
+            'handle': deep_handle,
             'config': tuned_dispatch_config,
             'async_finish': False,
         }
-        tuned_recv_x, _, _, _, tuned_handle, _ = buffer_deep.dispatch(**tuned_dispatch_args)
 
         best_time, best_results = 1e10, None
         for nvl_chunk_size in range(1, 5, 1):
             upper_bound = 29 if num_ranks == 128 else 33
             for rdma_chunk_size in range(8, upper_bound, 4):
                 tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
-                tune_args = {'x': tuned_recv_x, 'handle': tuned_handle, 'config': tune_config}
-                t, _, _ = benchmark_kernel(lambda: buffer_deep.combine(**tune_args), num_warmups=0, num_iters=1)
+                dispatch_runner = lambda: buffer_deep.dispatch(**tuned_dispatch_args)
+                combine_runner = lambda out, cfg=tune_config: run_buffer_combine_from_dispatch(buffer_deep, out, cfg)
+                _, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=0, num_iters=1)
+                t = combine_stats[0]
                 if t < best_time:
                     best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
 
@@ -606,14 +635,16 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     mori_dispatch_summary = None
     mori_combine_summary = None
     if run_mori:
-        mori_dispatch_time, _, _ = benchmark_kernel(lambda: buffer_mori.dispatch(**dispatch_args), num_warmups=1, num_iters=5)
+        dispatch_runner = lambda: buffer_mori.dispatch(**dispatch_args)
+        combine_runner = lambda out: run_buffer_combine_from_dispatch(buffer_mori, out, config, fallback_topk_weights=topk_weights)
+        dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=1, num_iters=5)
+        mori_dispatch_time = dispatch_stats[0]
         mori_dispatch_summary = {
             'time': mori_dispatch_time,
             'rdma_gbps': dispatch_bf16_rdma_send_bytes / 1e9 / mori_dispatch_time,
             'nvl_gbps': dispatch_bf16_nvl_recv_bytes / 1e9 / mori_dispatch_time,
         }
-        mori_combine_args = {'x': mori_recv_x, 'handle': mori_handle, 'config': config, 'topk_weights': mori_topk_weights}
-        mori_combine_time, _, _ = benchmark_kernel(lambda: buffer_mori.combine(**mori_combine_args), num_warmups=1, num_iters=5)
+        mori_combine_time = combine_stats[0]
         mori_combine_summary = {
             'time': mori_combine_time,
             'rdma_gbps': combine_bf16_rdma_recv_bytes / 1e9 / mori_combine_time,
