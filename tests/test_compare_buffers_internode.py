@@ -389,7 +389,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1),  block_num=16, rdma_block_num=8)
+                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = False, block_num=32, rdma_block_num=16)
 
     
     # device = torch.device('cuda', torch.cuda.current_device())
@@ -523,12 +523,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
         recv_match = warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
         mismatch |= not recv_match
-        if not recv_match and tensor_dumper is not None:
-            context = f"{setting['name']} rank{rank} recv_x"
-            tensor_dumper.log_tensor('recv_x/deep_ep', deep_recv_x.float(), context)
-            tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
-            tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
-            tensor_dumper.log_orderless_tensor('recv_x/mori_orderless', mori_recv_x.float(), context)
+        # if not recv_match and tensor_dumper is not None:
+        #     context = f"{setting['name']} rank{rank} recv_x"
+        #     tensor_dumper.log_tensor('recv_x/deep_ep', deep_recv_x.float(), context)
+        #     tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('recv_x/mori_orderless', mori_recv_x.float(), context)
             # if rank == 0:
             #     tensor_dumper.log_tensor('all_rank_x', all_rank_x.float(), context)
             #     tensor_dumper.log_tensor('all_rank_topk_idx', all_rank_topk_idx.to(torch.float32), context)
@@ -555,12 +555,12 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     if run_deep and run_mori:
         combined_match = warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
         mismatch |= not combined_match
-        if not combined_match and tensor_dumper is not None:
-            context = f"{setting['name']} rank{rank} combined_x"
-            tensor_dumper.log_tensor('combined_x/deep_ep', deep_combined_x.float(), context)
-            tensor_dumper.log_orderless_tensor('combined_x/deep_ep_orderless', deep_combined_x.float(), context)
-            tensor_dumper.log_tensor('combined_x/mori', mori_combined_x.float(), context)
-            tensor_dumper.log_orderless_tensor('combined_x/mori_orderless', mori_combined_x.float(), context)
+        # if not combined_match and tensor_dumper is not None:
+        #     context = f"{setting['name']} rank{rank} combined_x"
+        #     tensor_dumper.log_tensor('combined_x/deep_ep', deep_combined_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('combined_x/deep_ep_orderless', deep_combined_x.float(), context)
+        #     tensor_dumper.log_tensor('combined_x/mori', mori_combined_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('combined_x/mori_orderless', mori_combined_x.float(), context)
         mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
         
     if rank == 0:
