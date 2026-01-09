@@ -608,7 +608,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         
 
         combine_runner = lambda out: run_buffer_combine_from_dispatch(
-            buffer_deep, out, combine_config, fallback_topk_weights=topk_weights, override_handle=deep_handle)
+            buffer_deep, out, combine_config, fallback_topk_weights=deep_topk_weights, override_handle=deep_handle)
         dispatch_stats, combine_stats = benchmark_dispatch_combine(
             dispatch_runner, combine_runner, num_warmups=2, num_iters=10)
 
