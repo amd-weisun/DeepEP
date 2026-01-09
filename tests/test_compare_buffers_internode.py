@@ -15,7 +15,7 @@ import torch.multiprocessing as mp
 from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back
 
 
-NUM_SMs = 8
+NUM_SMs = 32
 
 PRESET_SETTINGS = [
     # {
