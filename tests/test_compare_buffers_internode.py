@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back
+from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back, bench
 
 
 NUM_SMs = 8
@@ -375,6 +375,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
     num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
         topk_idx, num_experts, num_ranks, num_tokens, num_local_ranks)
+    experts_per_node = max(num_experts // max(num_nodes, 1), 1)
+    rdma_idx = topk_idx // experts_per_node
+    rdma_idx.masked_fill_(topk_idx == -1, -1)
+    inplace_unique(rdma_idx, num_nodes)
+    num_rdma_token_sent = rdma_idx.ne(-1).sum().item()
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
     config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
@@ -503,6 +508,65 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             tensor_dumper.log_tensor('combined_x/mori', mori_combined_x.float(), context)
             tensor_dumper.log_orderless_tensor('combined_x/mori_orderless', mori_combined_x.float(), context)
         mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
+
+    if run_deep:
+        dispatch_bf16_rdma_send_bytes = num_rdma_token_sent * hidden * 2
+        dispatch_bf16_nvl_recv_bytes = deep_recv_x.numel() * 2
+        combine_bf16_nvl_send_bytes = dispatch_bf16_nvl_recv_bytes
+        combine_bf16_rdma_recv_bytes = dispatch_bf16_rdma_send_bytes
+
+        fp8_factor = (1 + 4 / 128) / 2
+        best_dispatch_results = None
+        for label, current_x in (('FP8', x_e4m3), ('BF16', local_x)):
+            best_time, best_results = 1e10, None
+            rdma_bytes = dispatch_bf16_rdma_send_bytes * (fp8_factor if isinstance(current_x, tuple) else 1.0)
+            nvl_bytes = dispatch_bf16_nvl_recv_bytes * (fp8_factor if isinstance(current_x, tuple) else 1.0)
+            for nvl_chunk_size in range(4, 33, 4):
+                for rdma_chunk_size in range(4, 33, 4):
+                    tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
+                    tune_args = {'x': current_x, 'handle': deep_handle, 'config': tune_config}
+                    t = bench(lambda: buffer_deep.dispatch(**tune_args))[0]
+                    if t < best_time:
+                        best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
+                    if local_rank == 0:
+                        print(f'[tuning][dispatch] {label}: SMs {NUM_SMs}, NVL chunk {nvl_chunk_size}, RDMA chunk {rdma_chunk_size}: {rdma_bytes / 1e9 / t:.2f} GB/s (RDMA), {nvl_bytes / 1e9 / t:.2f} GB/s (NVL) ', flush=True)
+            if local_rank == 0 and best_results is not None:
+                print(f'[tuning] Best dispatch ({label}): SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}: {rdma_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {nvl_bytes / 1e9 / best_time:.2f} GB/s (NVL)')
+                print()
+            if isinstance(current_x, tuple) and best_results is not None:
+                best_dispatch_tensor = torch.tensor(best_results, dtype=torch.int32, device='cuda')
+                gathered = [torch.zeros_like(best_dispatch_tensor) for _ in range(dist.get_world_size(group))]
+                dist.all_gather(gathered, best_dispatch_tensor, group=group)
+                best_dispatch_results = gathered[0].tolist()
+
+        tuned_dispatch_config = deep_ep.Config(best_dispatch_results[0], best_dispatch_results[1], nvl_buffer_size,
+                                              best_dispatch_results[2], rdma_buffer_size) if best_dispatch_results is not None else config
+        tuned_dispatch_args = {
+            'x': local_x,
+            'num_tokens_per_rank': num_tokens_per_rank,
+            'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
+            'is_token_in_rank': is_token_in_rank,
+            'num_tokens_per_expert': num_tokens_per_expert,
+            'config': tuned_dispatch_config,
+            'async_finish': False,
+        }
+        tuned_recv_x, _, _, _, tuned_handle, _ = buffer_deep.dispatch(**tuned_dispatch_args)
+
+        best_time, best_results = 1e10, None
+        for nvl_chunk_size in range(1, 5, 1):
+            upper_bound = 29 if num_ranks == 128 else 33
+            for rdma_chunk_size in range(8, upper_bound, 4):
+                tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
+                tune_args = {'x': tuned_recv_x, 'handle': tuned_handle, 'config': tune_config}
+                t = bench(lambda: buffer_deep.combine(**tune_args))[0]
+                if local_rank == 0:
+                    print(f'[tuning][combine] SMs {NUM_SMs}, NVL chunk {nvl_chunk_size}, RDMA chunk {rdma_chunk_size}: {combine_bf16_rdma_recv_bytes / 1e9 / t:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / t:.2f} GB/s (NVL) ')
+                if t < best_time:
+                    best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
+
+        if local_rank == 0 and best_results is not None:
+            print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}: {combine_bf16_rdma_recv_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL)')
+            print()
 
     dist.barrier()
     if rank == 0:
