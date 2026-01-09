@@ -48,26 +48,26 @@ PRESET_SETTINGS = [
     #     'log_values': False,
     #     'use_fp8' : True,
     # },
-    {
-        'name': 'setting_3',
-        'num_tokens': 2048,
-        'hidden': 7168,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 47,
-        'log_values': False,
-        'use_fp8' : True,
-    },
-    {
-        'name': 'setting_3',
-        'num_tokens': 2048,
-        'hidden': 7168,
-        'num_topk': 8,
-        'num_experts': 256,
-        'seed': 47,
-        'log_values': False,
-        'use_fp8' : False,
-    },
+    # {
+    #     'name': 'setting_3',
+    #     'num_tokens': 2048,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 47,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_3',
+    #     'num_tokens': 2048,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 47,
+    #     'log_values': False,
+    #     'use_fp8' : False,
+    # },
     {
         'name': 'setting_4',
         'num_tokens': 4096,
@@ -593,7 +593,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 dispatch_runner = lambda ta=tune_args: buffer_deep.dispatch(**ta)
                 combine_runner = lambda out, cfg=config: run_buffer_combine_from_dispatch(
                     buffer_deep, out, cfg, override_handle=deep_handle)
-                dispatch_stats, _ = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=0, num_iters=1)
+                dispatch_stats, _ = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=5, num_iters=50)
                 t = dispatch_stats[0]
                 if t < best_time:
                     best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
@@ -634,7 +634,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 dispatch_runner = lambda: buffer_deep.dispatch(**tuned_dispatch_args)
                 combine_runner = lambda out, cfg=tune_config: run_buffer_combine_from_dispatch(
                     buffer_deep, out, cfg, override_handle=deep_handle)
-                _, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=0, num_iters=1)
+                _, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=5, num_iters=50)
                 t = combine_stats[0]
                 if t < best_time:
                     best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
