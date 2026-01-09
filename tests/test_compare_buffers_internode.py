@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back, bench
+from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back
 
 
 NUM_SMs = 8
@@ -166,6 +166,25 @@ def _tensor_orderless_lines(tensor: torch.Tensor) -> list[str]:
     first_col = mat.reshape(mat.size(0), -1)[:, 0]
     sorted_vals = torch.sort(first_col)[0]
     return [f'{row.item():.6f}' for row in sorted_vals]
+
+
+def bench_once(run_fn):
+    torch.cuda.synchronize()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    run_fn()
+    end.record()
+    torch.cuda.synchronize()
+    return start.elapsed_time(end) / 1e3
+
+
+def benchmark_kernel(run_fn, *, num_warmups: int = 1, num_iters: int = 5):
+    for _ in range(num_warmups):
+        bench_once(run_fn)
+    times = [bench_once(run_fn) for _ in range(num_iters)]
+    avg = sum(times) / len(times)
+    return avg, min(times), max(times)
 
 
 def _round_up_num_experts(base: int, num_ranks: int) -> int:
@@ -509,11 +528,19 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             tensor_dumper.log_orderless_tensor('combined_x/mori_orderless', mori_combined_x.float(), context)
         mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
 
+    deep_dispatch_summaries = {}
+    deep_combine_summary = None
+    dispatch_bf16_rdma_send_bytes = num_rdma_token_sent * hidden * 2
     if run_deep:
-        dispatch_bf16_rdma_send_bytes = num_rdma_token_sent * hidden * 2
         dispatch_bf16_nvl_recv_bytes = deep_recv_x.numel() * 2
-        combine_bf16_nvl_send_bytes = dispatch_bf16_nvl_recv_bytes
-        combine_bf16_rdma_recv_bytes = dispatch_bf16_rdma_send_bytes
+    elif run_mori:
+        dispatch_bf16_nvl_recv_bytes = mori_recv_x.numel() * 2
+    else:
+        dispatch_bf16_nvl_recv_bytes = 0
+    combine_bf16_nvl_send_bytes = dispatch_bf16_nvl_recv_bytes
+    combine_bf16_rdma_recv_bytes = dispatch_bf16_rdma_send_bytes
+
+    if run_deep:
 
         fp8_factor = (1 + 4 / 128) / 2
         best_dispatch_results = None
@@ -525,14 +552,18 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
                 for rdma_chunk_size in range(4, 33, 4):
                     tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
                     tune_args = {'x': current_x, 'handle': deep_handle, 'config': tune_config}
-                    t = bench(lambda: buffer_deep.dispatch(**tune_args))[0]
+                    t, _, _ = benchmark_kernel(lambda: buffer_deep.dispatch(**tune_args), num_warmups=0, num_iters=1)
                     if t < best_time:
                         best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
-                    if local_rank == 0:
-                        print(f'[tuning][dispatch] {label}: SMs {NUM_SMs}, NVL chunk {nvl_chunk_size}, RDMA chunk {rdma_chunk_size}: {rdma_bytes / 1e9 / t:.2f} GB/s (RDMA), {nvl_bytes / 1e9 / t:.2f} GB/s (NVL) ', flush=True)
             if local_rank == 0 and best_results is not None:
                 print(f'[tuning] Best dispatch ({label}): SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}: {rdma_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {nvl_bytes / 1e9 / best_time:.2f} GB/s (NVL)')
                 print()
+            if best_results is not None:
+                deep_dispatch_summaries[label] = {
+                    'time': best_time,
+                    'rdma_gbps': rdma_bytes / 1e9 / best_time,
+                    'nvl_gbps': nvl_bytes / 1e9 / best_time,
+                }
             if isinstance(current_x, tuple) and best_results is not None:
                 best_dispatch_tensor = torch.tensor(best_results, dtype=torch.int32, device='cuda')
                 gathered = [torch.zeros_like(best_dispatch_tensor) for _ in range(dist.get_world_size(group))]
@@ -558,15 +589,62 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             for rdma_chunk_size in range(8, upper_bound, 4):
                 tune_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
                 tune_args = {'x': tuned_recv_x, 'handle': tuned_handle, 'config': tune_config}
-                t = bench(lambda: buffer_deep.combine(**tune_args))[0]
-                if local_rank == 0:
-                    print(f'[tuning][combine] SMs {NUM_SMs}, NVL chunk {nvl_chunk_size}, RDMA chunk {rdma_chunk_size}: {combine_bf16_rdma_recv_bytes / 1e9 / t:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / t:.2f} GB/s (NVL) ')
+                t, _, _ = benchmark_kernel(lambda: buffer_deep.combine(**tune_args), num_warmups=0, num_iters=1)
                 if t < best_time:
                     best_time, best_results = t, (NUM_SMs, nvl_chunk_size, rdma_chunk_size)
 
         if local_rank == 0 and best_results is not None:
             print(f'[tuning] Best combine: SMs {best_results[0]}, NVL chunk {best_results[1]}, RDMA chunk {best_results[2]}: {combine_bf16_rdma_recv_bytes / 1e9 / best_time:.2f} GB/s (RDMA), {combine_bf16_nvl_send_bytes / 1e9 / best_time:.2f} GB/s (NVL)')
             print()
+        if best_results is not None:
+            deep_combine_summary = {
+                'time': best_time,
+                'rdma_gbps': combine_bf16_rdma_recv_bytes / 1e9 / best_time,
+                'nvl_gbps': combine_bf16_nvl_send_bytes / 1e9 / best_time,
+            }
+
+    mori_dispatch_summary = None
+    mori_combine_summary = None
+    if run_mori:
+        mori_dispatch_time, _, _ = benchmark_kernel(lambda: buffer_mori.dispatch(**dispatch_args), num_warmups=1, num_iters=5)
+        mori_dispatch_summary = {
+            'time': mori_dispatch_time,
+            'rdma_gbps': dispatch_bf16_rdma_send_bytes / 1e9 / mori_dispatch_time,
+            'nvl_gbps': dispatch_bf16_nvl_recv_bytes / 1e9 / mori_dispatch_time,
+        }
+        mori_combine_args = {'x': mori_recv_x, 'handle': mori_handle, 'config': config, 'topk_weights': mori_topk_weights}
+        mori_combine_time, _, _ = benchmark_kernel(lambda: buffer_mori.combine(**mori_combine_args), num_warmups=1, num_iters=5)
+        mori_combine_summary = {
+            'time': mori_combine_time,
+            'rdma_gbps': combine_bf16_rdma_recv_bytes / 1e9 / mori_combine_time,
+            'nvl_gbps': combine_bf16_nvl_send_bytes / 1e9 / mori_combine_time,
+        }
+
+    if local_rank == 0:
+        active_label = 'FP8' if (use_fp8 and 'FP8' in deep_dispatch_summaries) else 'BF16'
+        if run_deep and active_label in deep_dispatch_summaries:
+            metrics = deep_dispatch_summaries[active_label]
+            print(f"[perf] DeepEP dispatch ({active_label}): time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+        if run_deep and deep_combine_summary is not None:
+            metrics = deep_combine_summary
+            print(f"[perf] DeepEP combine: time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+        if run_mori and mori_dispatch_summary is not None:
+            metrics = mori_dispatch_summary
+            print(f"[perf] MORI dispatch: time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+        if run_mori and mori_combine_summary is not None:
+            metrics = mori_combine_summary
+            print(f"[perf] MORI combine: time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+        if run_deep and run_mori and active_label in deep_dispatch_summaries and mori_dispatch_summary is not None:
+            deep_metrics = deep_dispatch_summaries[active_label]
+            ratio_time = mori_dispatch_summary['time'] / deep_metrics['time']
+            ratio_rdma = mori_dispatch_summary['rdma_gbps'] / deep_metrics['rdma_gbps'] if deep_metrics['rdma_gbps'] != 0 else float('inf')
+            ratio_nvl = mori_dispatch_summary['nvl_gbps'] / deep_metrics['nvl_gbps'] if deep_metrics['nvl_gbps'] != 0 else float('inf')
+            print(f"[perf] Dispatch ratio (MORI/DeepEP {active_label}): time={ratio_time:.2f}x, RDMA throughput={ratio_rdma:.2f}x, NVL throughput={ratio_nvl:.2f}x", flush=True)
+        if run_deep and run_mori and deep_combine_summary is not None and mori_combine_summary is not None:
+            ratio_time = mori_combine_summary['time'] / deep_combine_summary['time']
+            ratio_rdma = mori_combine_summary['rdma_gbps'] / deep_combine_summary['rdma_gbps'] if deep_combine_summary['rdma_gbps'] != 0 else float('inf')
+            ratio_nvl = mori_combine_summary['nvl_gbps'] / deep_combine_summary['nvl_gbps'] if deep_combine_summary['nvl_gbps'] != 0 else float('inf')
+            print(f"[perf] Combine ratio (MORI/DeepEP): time={ratio_time:.2f}x, RDMA throughput={ratio_rdma:.2f}x, NVL throughput={ratio_nvl:.2f}x", flush=True)
 
     dist.barrier()
     if rank == 0:
