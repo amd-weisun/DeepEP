@@ -77,9 +77,9 @@ PRESET_SETTINGS = [
         'seed': 47,
         'log_values': False,
         'use_fp8' : True,
-        'deepep_dispatch_nvl_chunk_size':20 ,
+        'deepep_dispatch_nvl_chunk_size':24 ,
         'deepep_dispatch_rdma_chunk_size':20 ,
-        'deepep_combine_nvl_chunk_size':1,
+        'deepep_combine_nvl_chunk_size':4,
         'deepep_combine_rdma_chunk_size':32 ,
     },
     {
@@ -92,8 +92,8 @@ PRESET_SETTINGS = [
         'log_values': False,
         'use_fp8' : False,
         'deepep_dispatch_nvl_chunk_size':24 ,
-        'deepep_dispatch_rdma_chunk_size':20 ,
-        'deepep_combine_nvl_chunk_size':1,
+        'deepep_dispatch_rdma_chunk_size':24 ,
+        'deepep_combine_nvl_chunk_size':4,
         'deepep_combine_rdma_chunk_size':32 ,
     },
 ]
@@ -610,7 +610,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         combine_runner = lambda out: run_buffer_combine_from_dispatch(
             buffer_deep, out, combine_config, fallback_topk_weights=deep_topk_weights, override_handle=deep_handle)
         dispatch_stats, combine_stats = benchmark_dispatch_combine(
-            dispatch_runner, combine_runner, num_warmups=2, num_iters=10)
+            dispatch_runner, combine_runner, num_warmups=5, num_iters=50)
 
         deep_dispatch_time = dispatch_stats[0]
         deep_dispatch_summaries[active_label] = {
@@ -631,7 +631,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     if run_mori:
         dispatch_runner = lambda: buffer_mori.dispatch(**dispatch_args)
         combine_runner = lambda out: run_buffer_combine_from_dispatch(buffer_mori, out, config, fallback_topk_weights=topk_weights)
-        dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=2, num_iters=10)
+        dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=5, num_iters=50)
         mori_dispatch_time = dispatch_stats[0]
         mori_dispatch_summary = {
             'time': mori_dispatch_time,
