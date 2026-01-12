@@ -234,8 +234,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             dispatch_bw = dispatch_bytes / 1e9 / (stats['dispatch_avg_ms'] / 1000) if stats['dispatch_avg_ms'] > 0 else 0
             combine_bw = combine_bytes / 1e9 / (stats['combine_avg_ms'] / 1000) if stats['combine_avg_ms'] > 0 else 0
             
-            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f}, max={stats['dispatch_max_ms']:.3f}) | BW={dispatch_bw:.2f} GB/s", flush=True)
-            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f}, max={stats['combine_max_ms']:.3f}) | BW={combine_bw:.2f} GB/s", flush=True)
+            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f}, max={stats['dispatch_max_ms']:.3f}) | dispatch_bytes = {dispatch_bytes / 1e6} MB  | BW={dispatch_bw:.2f} GB/s", flush=True)
+            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f}, max={stats['combine_max_ms']:.3f}) | combine_bytes = {combine_bytes / 1e6} MB | BW={combine_bw:.2f} GB/s", flush=True)
         return stats
 
     # Low Latency Dispatch
