@@ -156,6 +156,20 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
 
     use_fp8 = False
 
+    num_selections = (topk_idx != -1).sum().item()
+    
+    if use_fp8:
+        # FP8 config from deep_ep: data + scale + ...
+        # (hidden + hidden / 128 * 4 + 16)
+        bytes_per_token_dispatch = (hidden + hidden / 128 * 4 + 16)
+    else:
+        bytes_per_token_dispatch = hidden * 2
+        
+    bytes_per_token_combine = hidden * 2
+    
+    num_dispatch_comm_bytes = num_selections * bytes_per_token_dispatch
+    num_combine_comm_bytes = num_selections * bytes_per_token_combine
+
     def clone_low_latency_inputs():
         return {
             'x': x.clone(),
@@ -198,12 +212,14 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         torch.cuda.synchronize()
         return dispatch_start.elapsed_time(dispatch_end), combine_start.elapsed_time(combine_end)
 
-    def benchmark_low_latency(name: str, buffer, *, num_warmups: int = 1, num_iters: int = 5):
+    def benchmark_low_latency(name: str, buffer, *, num_warmups: int = 1, num_iters: int = 5, dispatch_bytes: int = 0, combine_bytes: int = 0):
         if buffer is None:
             return None
         for _ in range(num_warmups):
             bench_once(buffer)
         times = [bench_once(buffer) for _ in range(num_iters)]
+        
+        # NOTE: times is a list of (dispatch_ms, combine_ms)
         dispatch_times = [t[0] for t in times]
         combine_times = [t[1] for t in times]
         stats = {
@@ -215,8 +231,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
             'combine_max_ms': max(combine_times),
         }
         if rank == 0:
-            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f}, max={stats['dispatch_max_ms']:.3f})", flush=True)
-            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f}, max={stats['combine_max_ms']:.3f})", flush=True)
+            dispatch_bw = dispatch_bytes / 1e9 / (stats['dispatch_avg_ms'] / 1000) if stats['dispatch_avg_ms'] > 0 else 0
+            combine_bw = combine_bytes / 1e9 / (stats['combine_avg_ms'] / 1000) if stats['combine_avg_ms'] > 0 else 0
+            
+            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f}, max={stats['dispatch_max_ms']:.3f}) | BW={dispatch_bw:.2f} GB/s", flush=True)
+            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f}, max={stats['combine_max_ms']:.3f}) | BW={combine_bw:.2f} GB/s", flush=True)
         return stats
 
     # Low Latency Dispatch
@@ -331,8 +350,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         print(f"[info] skipping cross-buffer combine comparison (path={run_path}).", flush=True)
 
     dist.barrier()
-    deep_perf = benchmark_low_latency('DeepEP', buffer_deep, num_warmups=5, num_iters=50)
-    mori_perf = benchmark_low_latency('MORI', buffer_mori, num_warmups=5, num_iters=50)
+    deep_perf = benchmark_low_latency('DeepEP', buffer_deep, num_warmups=5, num_iters=50, 
+                                      dispatch_bytes=num_dispatch_comm_bytes, combine_bytes=num_combine_comm_bytes)
+    mori_perf = benchmark_low_latency('MORI', buffer_mori, num_warmups=5, num_iters=50,
+                                      dispatch_bytes=num_dispatch_comm_bytes, combine_bytes=num_combine_comm_bytes)
     dist.barrier()
     if rank == 0 and deep_perf and mori_perf:
         dispatch_ratio = mori_perf['dispatch_avg_ms'] / max(deep_perf['dispatch_avg_ms'], 1e-6)
