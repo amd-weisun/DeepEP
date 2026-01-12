@@ -78,6 +78,9 @@ PRESET_SETTINGS = [
         'log_values': False,
         'use_fp8' : True,
         'reorder_mori' : True,
+        'mori_block_num':32,
+        'mori_rdma_block_num':16,
+        'mori_warp_num_per_block':16 ,
         'deepep_dispatch_nvl_chunk_size':24 ,
         'deepep_dispatch_rdma_chunk_size':20 ,
         'deepep_combine_nvl_chunk_size':4,
@@ -93,6 +96,9 @@ PRESET_SETTINGS = [
         'log_values': False,
         'use_fp8' : False,
         'reorder_mori' : True,
+        'mori_block_num':32,
+        'mori_rdma_block_num':16,
+        'mori_warp_num_per_block':16 ,
         'deepep_dispatch_nvl_chunk_size':24 ,
         'deepep_dispatch_rdma_chunk_size':24 ,
         'deepep_combine_nvl_chunk_size':4,
@@ -378,6 +384,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
     reorder_mori = setting.get('reorder_mori', False)
+    mori_block_num = setting.get('mori_block_num',32)
+    mori_rdma_block_num = setting.get('mori_rdma_block_num',16)
+    mori_warp_num_per_block = setting.get('mori_warp_num_per_block',16)
 
     tensor_dumper: Optional[AsyncTensorDump] = None
     if run_path == 'both':
@@ -392,7 +401,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = reorder_mori, block_num=32, rdma_block_num=16)
+                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = reorder_mori, block_num=mori_block_num, warp_num_per_block=mori_warp_num_per_block, rdma_block_num=mori_rdma_block_num)
 
     
     # device = torch.device('cuda', torch.cuda.current_device())
@@ -699,6 +708,9 @@ def main():
     parser.add_argument('--use-fp8', action='store_true', help='Use FP8 precision')
     parser.add_argument('--reorder-mori', action='store_true', help='reorder MORI dispatch result to match DeepEP')
     parser.add_argument('--log-values', action='store_true', help='Log tensor values')
+    parser.add_argument('mori_block_num', type=int, default=32, help='MORI block num')
+    parser.add_argument('mori_rdma_block_num', type=int, default=16, help='MORI RDMA block num')
+    parser.add_argument('mori_warp_num_per_block', type=int, default=16 , help='MORI warp num per block')
     parser.add_argument('--deepep-dispatch-nvl-chunk-size', type=int, default=None)
     parser.add_argument('--deepep-dispatch-rdma-chunk-size', type=int, default=None)
     parser.add_argument('--deepep-combine-nvl-chunk-size', type=int, default=None)
@@ -722,6 +734,9 @@ def main():
             'log_values': args.log_values,
             'use_fp8': args.use_fp8,
             'reorder_mori': args.reorder_mori,
+            'mori_block_num': args.mori_block_num,
+            'mori_rdma_block_num': args.mori_rdma_block_num,
+            'mori_warp_num_per_block': args.mori_warp_num_per_block,
         }
         if args.deepep_dispatch_nvl_chunk_size is not None:
             custom_setting['deepep_dispatch_nvl_chunk_size'] = args.deepep_dispatch_nvl_chunk_size
