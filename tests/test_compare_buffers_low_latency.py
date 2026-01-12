@@ -68,6 +68,19 @@ PRESET_SETTINGS = [
         'log_values': False,
         'num_processes': 8,
         'use_fp8' : True,
+        'use_gpu_ll_layout_transform' : False,
+    },
+    {
+        'name': 'setting_2_4',
+        'num_tokens': 128,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 288,
+        'seed': 42,
+        'log_values': False,
+        'num_processes': 8,
+        'use_fp8' : True,
+        'use_gpu_ll_layout_transform' : True,
     },
 ]
 
@@ -116,9 +129,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     run_mori = run_path in ('mori', 'both')
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
     use_fp8 = setting.get('use_fp8', False)
+    use_gpu_ll_layout_transform = setting.get('use_gpu_ll_layout_transform', True)
 
     if rank == 0:
-        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}, use_fp8 = {use_fp8} ", flush=True)
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}, use_fp8 = {use_fp8}, use_gpu_ll_layout_transform = {use_gpu_ll_layout_transform} ", flush=True)
         print(f"[info] group.rank()={group.rank()} , group.size()={group.size()} ", flush=True)
 
 
@@ -133,7 +147,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     buffer_mori = None
     if run_mori:
         buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=True,
-                                  num_qps_per_rank=num_experts // num_ranks)
+                                  num_qps_per_rank=num_experts // num_ranks, use_gpu_ll_layout_transform = use_gpu_ll_layout_transform)
 
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
