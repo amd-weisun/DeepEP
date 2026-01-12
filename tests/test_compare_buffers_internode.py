@@ -613,7 +613,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         combine_runner = lambda out: run_buffer_combine_from_dispatch(
             buffer_deep, out, combine_config, fallback_topk_weights=deep_topk_weights, override_handle=deep_handle)
         dispatch_stats, combine_stats = benchmark_dispatch_combine(
-            dispatch_runner, combine_runner, num_warmups=5, num_iters=50)
+            dispatch_runner, combine_runner, num_warmups=10, num_iters=100)
 
         deep_dispatch_time = dispatch_stats[0]
         deep_dispatch_summaries[active_label] = {
@@ -634,7 +634,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     if run_mori:
         dispatch_runner = lambda: buffer_mori.dispatch(**dispatch_args)
         combine_runner = lambda out: run_buffer_combine_from_dispatch(buffer_mori, out, config, fallback_topk_weights=topk_weights)
-        dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=5, num_iters=50)
+        dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=10, num_iters=100)
         mori_dispatch_time = dispatch_stats[0]
         mori_dispatch_summary = {
             'time': mori_dispatch_time,
