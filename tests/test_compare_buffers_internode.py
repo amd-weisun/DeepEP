@@ -77,6 +77,7 @@ PRESET_SETTINGS = [
         'seed': 47,
         'log_values': False,
         'use_fp8' : True,
+        'reorder_mori' : True,
         'deepep_dispatch_nvl_chunk_size':24 ,
         'deepep_dispatch_rdma_chunk_size':20 ,
         'deepep_combine_nvl_chunk_size':4,
@@ -91,6 +92,7 @@ PRESET_SETTINGS = [
         'seed': 47,
         'log_values': False,
         'use_fp8' : False,
+        'reorder_mori' : True,
         'deepep_dispatch_nvl_chunk_size':24 ,
         'deepep_dispatch_rdma_chunk_size':24 ,
         'deepep_combine_nvl_chunk_size':4,
@@ -375,6 +377,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     use_fp8 = setting.get('use_fp8', False)
 
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
+    reorder_mori = setting.get('reorder_mori', False)
 
     tensor_dumper: Optional[AsyncTensorDump] = None
     if run_path == 'both':
@@ -389,7 +392,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = False, block_num=32, rdma_block_num=16)
+                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = reorder_mori, block_num=32, rdma_block_num=16)
 
     
     # device = torch.device('cuda', torch.cuda.current_device())
@@ -694,6 +697,7 @@ def main():
     parser.add_argument('--num-experts', type=int, help='Total number of experts')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--use-fp8', action='store_true', help='Use FP8 precision')
+    parser.add_argument('--reorder-mori', action='store_true', help='reorder MORI dispatch result to match DeepEP')
     parser.add_argument('--log-values', action='store_true', help='Log tensor values')
     parser.add_argument('--deepep-dispatch-nvl-chunk-size', type=int, default=None)
     parser.add_argument('--deepep-dispatch-rdma-chunk-size', type=int, default=None)
@@ -717,6 +721,7 @@ def main():
             'seed': args.seed,
             'log_values': args.log_values,
             'use_fp8': args.use_fp8,
+            'reorder_mori': args.reorder_mori,
         }
         if args.deepep_dispatch_nvl_chunk_size is not None:
             custom_setting['deepep_dispatch_nvl_chunk_size'] = args.deepep_dispatch_nvl_chunk_size
