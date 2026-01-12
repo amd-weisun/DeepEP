@@ -686,18 +686,59 @@ def main():
                         help='Number of local ranks (GPUs) per node for spanning the test')
     parser.add_argument('--path', type=str, choices=['deep', 'mori', 'both'], default='both',
                         help='Select which buffer implementation to run for debugging')
+    
+    # Custom setting arguments
+    parser.add_argument('--num-tokens', type=int, help='Number of tokens')
+    parser.add_argument('--hidden', type=int, help='Hidden dimension size')
+    parser.add_argument('--num-topk', type=int, help='Number of top-k experts')
+    parser.add_argument('--num-experts', type=int, help='Total number of experts')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--use-fp8', action='store_true', help='Use FP8 precision')
+    parser.add_argument('--log-values', action='store_true', help='Log tensor values')
+    parser.add_argument('--deepep-dispatch-nvl-chunk-size', type=int, default=None)
+    parser.add_argument('--deepep-dispatch-rdma-chunk-size', type=int, default=None)
+    parser.add_argument('--deepep-combine-nvl-chunk-size', type=int, default=None)
+    parser.add_argument('--deepep-combine-rdma-chunk-size', type=int, default=None)
+
     args = parser.parse_args()
+
+    settings_to_run = PRESET_SETTINGS
+    if args.num_tokens is not None:
+         # simple validation
+        if not all([args.hidden, args.num_topk, args.num_experts]):
+             parser.error("--num-tokens requires --hidden, --num-topk, and --num-experts")
+        
+        custom_setting = {
+            'name': 'custom_setting',
+            'num_tokens': args.num_tokens,
+            'hidden': args.hidden,
+            'num_topk': args.num_topk,
+            'num_experts': args.num_experts,
+            'seed': args.seed,
+            'log_values': args.log_values,
+            'use_fp8': args.use_fp8,
+        }
+        if args.deepep_dispatch_nvl_chunk_size is not None:
+            custom_setting['deepep_dispatch_nvl_chunk_size'] = args.deepep_dispatch_nvl_chunk_size
+        if args.deepep_dispatch_rdma_chunk_size is not None:
+            custom_setting['deepep_dispatch_rdma_chunk_size'] = args.deepep_dispatch_rdma_chunk_size
+        if args.deepep_combine_nvl_chunk_size is not None:
+            custom_setting['deepep_combine_nvl_chunk_size'] = args.deepep_combine_nvl_chunk_size
+        if args.deepep_combine_rdma_chunk_size is not None:
+            custom_setting['deepep_combine_rdma_chunk_size'] = args.deepep_combine_rdma_chunk_size
+            
+        settings_to_run = [custom_setting]
 
     if args.backend == 'mpi':
         rank_env = int(os.getenv('RANK', '0'))
         local_rank = rank_env % args.num_local_ranks
-        for setting in PRESET_SETTINGS:
+        for setting in settings_to_run:
             if rank_env == 0:
                 print('-------------------------------------------------------------------------', flush=True)
                 print(f"[info] launching '{setting['name']}' with backend mpi", flush=True)
             compare_buffers(local_rank, args.num_local_ranks, args.backend, setting, args.path)
     else:
-        for setting in PRESET_SETTINGS:
+        for setting in settings_to_run:
             num_processes = args.num_local_ranks
             print('-------------------------------------------------------------------------', flush=True)
             print(f"[info] launching '{setting['name']}' with backend {args.backend} and {num_processes} local ranks", flush=True)
