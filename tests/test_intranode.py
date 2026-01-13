@@ -13,7 +13,7 @@ import test_low_latency
 
 def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: deep_ep.Buffer, group: dist.ProcessGroup):
     # Settings
-    num_tokens, hidden, num_topk, num_experts = 128, 7168, 8, (32 // num_ranks) * num_ranks
+    num_tokens, hidden, num_topk, num_experts = 4096, 7168, 8, (256 // num_ranks) * num_ranks
     assert num_experts % num_ranks == 0
     if local_rank == 0:
         print(f'[config] num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}', flush=True)
@@ -78,13 +78,6 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
             assert (check_x[check_start:check_end, :].int() - i).sum().item() == 0
             check_start = check_end
 
-    def describe_shape(obj):
-        if torch.is_tensor(obj):
-            return tuple(obj.shape)
-        if isinstance(obj, (list, tuple)):
-            return tuple(describe_shape(v) for v in obj)
-        return type(obj).__name__
-
     for previous_mode in (False, True):
         for async_mode in (False, True):
             for current_x in (x_pure_rand, x, x_e4m3):
@@ -100,13 +93,6 @@ def test_main(num_sms: int, local_rank: int, num_ranks: int, rank: int, buffer: 
                     recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, event = buffer.dispatch(**dispatch_args)
                     event.current_stream_wait() if async_mode else ()
                     recv_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
-                    if(local_rank == 0):
-                        print(' dispatched', flush=True)
-                        print('[debug] dispatch output shapes:', flush=True)
-                        print('   recv_x ->', describe_shape(recv_x), flush=True)
-                        print('   recv_topk_idx ->', describe_shape(recv_topk_idx), flush=True)
-                        print('   recv_topk_weights ->', describe_shape(recv_topk_weights), flush=True)
-                        print('   recv_num_tokens_per_expert_list ->', describe_shape(recv_num_tokens_per_expert_list), flush=True)
 
                     # Checks
                     rank_prefix_matrix = handle[0]
@@ -234,5 +220,5 @@ def test_loop(local_rank: int, num_local_ranks: int):
     dist.destroy_process_group(group)
 
 if __name__ == '__main__':
-    num_processes = 2
+    num_processes = 8
     torch.multiprocessing.spawn(test_loop, args=(num_processes, ), nprocs=num_processes)
