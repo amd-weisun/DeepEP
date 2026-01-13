@@ -368,7 +368,20 @@ def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.T
     return masked
 
 
-
+def _get_global_stats(val: float, group) -> dict:
+    t_avg = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_avg, op=dist.ReduceOp.SUM, group=group)
+    avg = t_avg.item() / dist.get_world_size(group)
+    
+    t_min = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_min, op=dist.ReduceOp.MIN, group=group)
+    mn = t_min.item()
+    
+    t_max = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_max, op=dist.ReduceOp.MAX, group=group)
+    mx = t_max.item()
+    
+    return {'avg': avg, 'min': mn, 'max': mx}
 
 
 def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict, run_path: str):
@@ -626,15 +639,17 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
 
         deep_dispatch_time = dispatch_stats[0]
         deep_dispatch_summaries[active_label] = {
-            'time': deep_dispatch_time,
-            'rdma_gbps': rdma_bytes / 1e9 / deep_dispatch_time,
-            'nvl_gbps': nvl_bytes / 1e9 / deep_dispatch_time,
+            'time': _get_global_stats(deep_dispatch_time, group),
+            'rdma_gbps': _get_global_stats(rdma_bytes / 1e9 / deep_dispatch_time, group),
+            'nvl_gbps': _get_global_stats(nvl_bytes / 1e9 / deep_dispatch_time, group),
         }
 
         deep_combine_time = combine_stats[0]
         deep_combine_summary = {
-            'time': deep_combine_time,
-            'rdma_gbps': combine_bf16_rdma_recv_bytes / 1e9 / deep_combine_time,
+            'time': _get_global_stats(deep_combine_time, group),
+            'rdma_gbps': _get_global_stats(combine_bf16_rdma_recv_bytes / 1e9 / deep_combine_time, group),
+            'nvl_gbps': _get_global_stats(combine_bf16_nvl_send_bytes / 1e9 / deep_combine_time, group),
+        }
             'nvl_gbps': combine_bf16_nvl_send_bytes / 1e9 / deep_combine_time,
         }
 
@@ -646,41 +661,45 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=10, num_iters=100)
         mori_dispatch_time = dispatch_stats[0]
         mori_dispatch_summary = {
-            'time': mori_dispatch_time,
-            'rdma_gbps': (dispatch_bf16_rdma_send_bytes * throughput_scale) / 1e9 / mori_dispatch_time,
-            'nvl_gbps': (dispatch_bf16_nvl_recv_bytes * throughput_scale) / 1e9 / mori_dispatch_time,
+            'time': _get_global_stats(mori_dispatch_time, group),
+            'rdma_gbps': _get_global_stats((dispatch_bf16_rdma_send_bytes * throughput_scale) / 1e9 / mori_dispatch_time, group),
+            'nvl_gbps': _get_global_stats((dispatch_bf16_nvl_recv_bytes * throughput_scale) / 1e9 / mori_dispatch_time, group),
         }
         mori_combine_time = combine_stats[0]
         mori_combine_summary = {
-            'time': mori_combine_time,
-            'rdma_gbps': combine_bf16_rdma_recv_bytes / 1e9 / mori_combine_time,
-            'nvl_gbps': combine_bf16_nvl_send_bytes / 1e9 / mori_combine_time,
+            'time': _get_global_stats(mori_combine_time, group),
+            'rdma_gbps': _get_global_stats(combine_bf16_rdma_recv_bytes / 1e9 / mori_combine_time, group),
+            'nvl_gbps': _get_global_stats(combine_bf16_nvl_send_bytes / 1e9 / mori_combine_time, group),
         }
 
     if local_rank == 0:
         active_label = 'FP8' if (use_fp8 and 'FP8' in deep_dispatch_summaries) else 'BF16'
+        
+        def format_metric(m, scale=1.0):
+            return f"{m['avg'] * scale:.2f} (min={m['min'] * scale:.2f}, max={m['max'] * scale:.2f})"
+
+        def print_perf(prefix, metrics):
+            print(f"[perf] {prefix}: time={format_metric(metrics['time'], 1e6)} us, RDMA={format_metric(metrics['rdma_gbps'])} GB/s, NVL={format_metric(metrics['nvl_gbps'])} GB/s", flush=True)
+
         if run_deep and active_label in deep_dispatch_summaries:
-            metrics = deep_dispatch_summaries[active_label]
-            print(f"[perf] DeepEP dispatch ({active_label}): time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+            print_perf(f"DeepEP dispatch ({active_label})", deep_dispatch_summaries[active_label])
         if run_deep and deep_combine_summary is not None:
-            metrics = deep_combine_summary
-            print(f"[perf] DeepEP combine: time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+            print_perf("DeepEP combine", deep_combine_summary)
         if run_mori and mori_dispatch_summary is not None:
-            metrics = mori_dispatch_summary
-            print(f"[perf] MORI dispatch ({active_label}): time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+            print_perf(f"MORI dispatch ({active_label})", mori_dispatch_summary)
         if run_mori and mori_combine_summary is not None:
-            metrics = mori_combine_summary
-            print(f"[perf] MORI combine: time={metrics['time'] * 1e6:.2f} us, RDMA={metrics['rdma_gbps']:.2f} GB/s, NVL={metrics['nvl_gbps']:.2f} GB/s", flush=True)
+            print_perf("MORI combine", mori_combine_summary)
+
         if run_deep and run_mori and active_label in deep_dispatch_summaries and mori_dispatch_summary is not None:
             deep_metrics = deep_dispatch_summaries[active_label]
-            ratio_time = mori_dispatch_summary['time'] / deep_metrics['time']
-            ratio_rdma = mori_dispatch_summary['rdma_gbps'] / deep_metrics['rdma_gbps'] if deep_metrics['rdma_gbps'] != 0 else float('inf')
-            ratio_nvl = mori_dispatch_summary['nvl_gbps'] / deep_metrics['nvl_gbps'] if deep_metrics['nvl_gbps'] != 0 else float('inf')
+            ratio_time = mori_dispatch_summary['time']['avg'] / deep_metrics['time']['avg']
+            ratio_rdma = mori_dispatch_summary['rdma_gbps']['avg'] / deep_metrics['rdma_gbps']['avg'] if deep_metrics['rdma_gbps']['avg'] != 0 else float('inf')
+            ratio_nvl = mori_dispatch_summary['nvl_gbps']['avg'] / deep_metrics['nvl_gbps']['avg'] if deep_metrics['nvl_gbps']['avg'] != 0 else float('inf')
             print(f"[perf] Dispatch ratio (MORI/DeepEP {active_label}): time={ratio_time:.2f}x, RDMA throughput={ratio_rdma:.2f}x, NVL throughput={ratio_nvl:.2f}x", flush=True)
         if run_deep and run_mori and deep_combine_summary is not None and mori_combine_summary is not None:
-            ratio_time = mori_combine_summary['time'] / deep_combine_summary['time']
-            ratio_rdma = mori_combine_summary['rdma_gbps'] / deep_combine_summary['rdma_gbps'] if deep_combine_summary['rdma_gbps'] != 0 else float('inf')
-            ratio_nvl = mori_combine_summary['nvl_gbps'] / deep_combine_summary['nvl_gbps'] if deep_combine_summary['nvl_gbps'] != 0 else float('inf')
+            ratio_time = mori_combine_summary['time']['avg'] / deep_combine_summary['time']['avg']
+            ratio_rdma = mori_combine_summary['rdma_gbps']['avg'] / deep_combine_summary['rdma_gbps']['avg'] if deep_combine_summary['rdma_gbps']['avg'] != 0 else float('inf')
+            ratio_nvl = mori_combine_summary['nvl_gbps']['avg'] / deep_combine_summary['nvl_gbps']['avg'] if deep_combine_summary['nvl_gbps']['avg'] != 0 else float('inf')
             print(f"[perf] Combine ratio (MORI/DeepEP): time={ratio_time:.2f}x, RDMA throughput={ratio_rdma:.2f}x, NVL throughput={ratio_nvl:.2f}x", flush=True)
 
     dist.barrier()
