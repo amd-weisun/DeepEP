@@ -395,7 +395,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     log_values = setting.get('log_values', True)
     use_fp8 = setting.get('use_fp8', False)
 
-    num_nodes = int(os.getenv('WORLD_SIZE', 2))
+    num_nodes = int(os.getenv('WORLD_SIZE', 1))
     reorder_mori = setting.get('reorder_mori', False)
     mori_block_num = setting.get('mori_block_num',32)
     mori_rdma_block_num = setting.get('mori_rdma_block_num',16)
@@ -600,7 +600,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     # performance benchmarking and comparison
     deep_dispatch_summaries = {}
     deep_combine_summary = None
-    dispatch_bf16_rdma_send_bytes = num_rdma_token_sent * hidden * 2
+    dispatch_bf16_rdma_send_bytes = num_rdma_token_sent * hidden * 2 if num_nodes > 1 else 0
     if run_deep:
         dispatch_bf16_nvl_recv_bytes = deep_recv_x.numel() * 2
     elif run_mori:
