@@ -460,7 +460,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     inplace_unique(rdma_idx, num_nodes)
     num_rdma_token_sent = rdma_idx.ne(-1).sum().item()
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
-    config = deep_ep.Config(num_sms, 8, nvl_buffer_size, 16, rdma_buffer_size)
+    nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 1)
+    rdma_chunk_size = setting.get('deepep_dispatch_rdma_chunk_size', 1)
+    config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
 
     dispatch_args = {
         'x': x_e4m3 if use_fp8 else local_x,
