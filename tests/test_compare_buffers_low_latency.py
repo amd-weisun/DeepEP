@@ -10,11 +10,6 @@ import deep_ep
 from utils import (calc_diff, init_dist, inplace_unique, per_token_cast_back)
 
 
-NUM_SMs = 8
-        # case 2560: case_macro(2560); \
-        # case 5120: case_macro(5120); \
-        # case 4096: case_macro(4096); \
-        # case 7168: case_macro(7168); \
 PRESET_SETTINGS = [
     # {
     #     'name': 'setting_1',
