@@ -400,6 +400,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     mori_block_num = setting.get('mori_block_num',32)
     mori_rdma_block_num = setting.get('mori_rdma_block_num',16)
     mori_warp_num_per_block = setting.get('mori_warp_num_per_block',16)
+    kernel_type = setting.get('mori_kernel_type',None)
 
     tensor_dumper: Optional[AsyncTensorDump] = None
     if run_path == 'both':
@@ -414,7 +415,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
     buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = reorder_mori, block_num=mori_block_num, warp_num_per_block=mori_warp_num_per_block, rdma_block_num=mori_rdma_block_num)
+                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = reorder_mori, block_num=mori_block_num, 
+                              warp_num_per_block=mori_warp_num_per_block, rdma_block_num=mori_rdma_block_num,
+                              kernel_type=kernel_type)
 
     
     # device = torch.device('cuda', torch.cuda.current_device())
@@ -736,6 +739,8 @@ def main():
     parser.add_argument('--deepep-combine-nvl-chunk-size', type=int, default=None)
     parser.add_argument('--deepep-combine-rdma-chunk-size', type=int, default=None)
     parser.add_argument('--num-sms', type=int, default=32, help='Number of SMs to use(DeepEp only)')
+    parser.add_argument('--mori-kernel-type', type=str, choices=['intra', 'v0', 'v1', 'v1_ll', 'none'], default='none',
+                        help='mori-kernel-type (overridden by custom settings if provided)')
 
     args = parser.parse_args()
 
@@ -759,6 +764,8 @@ def main():
             'mori_rdma_block_num': args.mori_rdma_block_num,
             'mori_warp_num_per_block': args.mori_warp_num_per_block,
         }
+        if args.mori_kernel_type != 'none':
+            custom_setting['mori_kernel_type'] = args.mori_kernel_type
         if args.deepep_dispatch_nvl_chunk_size is not None:
             custom_setting['deepep_dispatch_nvl_chunk_size'] = args.deepep_dispatch_nvl_chunk_size
         if args.deepep_dispatch_rdma_chunk_size is not None:
