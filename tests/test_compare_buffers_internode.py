@@ -650,8 +650,6 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
             'rdma_gbps': _get_global_stats(combine_bf16_rdma_recv_bytes / 1e9 / deep_combine_time, group),
             'nvl_gbps': _get_global_stats(combine_bf16_nvl_send_bytes / 1e9 / deep_combine_time, group),
         }
-            'nvl_gbps': combine_bf16_nvl_send_bytes / 1e9 / deep_combine_time,
-        }
 
     mori_dispatch_summary = None
     mori_combine_summary = None
