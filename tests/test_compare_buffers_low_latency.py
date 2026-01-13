@@ -118,6 +118,22 @@ def _round_up_num_experts(base: int, num_ranks: int) -> int:
     return per_rank * num_ranks
 
 
+def _get_global_stats(val: float, group) -> dict:
+    t_avg = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_avg, op=dist.ReduceOp.SUM, group=group)
+    avg = t_avg.item() / dist.get_world_size(group)
+    
+    t_min = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_min, op=dist.ReduceOp.MIN, group=group)
+    mn = t_min.item()
+    
+    t_max = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_max, op=dist.ReduceOp.MAX, group=group)
+    mx = t_max.item()
+    
+    return {'avg': avg, 'min': mn, 'max': mx}
+
+
 def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_path: str):
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
     num_experts = _round_up_num_experts(setting['num_experts'], num_ranks)
@@ -236,20 +252,27 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         # NOTE: times is a list of (dispatch_ms, combine_ms)
         dispatch_times = [t[0] for t in times]
         combine_times = [t[1] for t in times]
+        
+        local_dispatch_avg_ms = sum(dispatch_times) / len(dispatch_times)
+        local_combine_avg_ms = sum(combine_times) / len(combine_times)
+        
+        local_dispatch_bw = dispatch_bytes / 1e9 / (local_dispatch_avg_ms / 1000) if local_dispatch_avg_ms > 0 else 0
+        local_combine_bw = combine_bytes / 1e9 / (local_combine_avg_ms / 1000) if local_combine_avg_ms > 0 else 0
+        
         stats = {
-            'dispatch_avg_ms': sum(dispatch_times) / len(dispatch_times),
-            'dispatch_min_ms': min(dispatch_times),
-            'dispatch_max_ms': max(dispatch_times),
-            'combine_avg_ms': sum(combine_times) / len(combine_times),
-            'combine_min_ms': min(combine_times),
-            'combine_max_ms': max(combine_times),
+            'dispatch_ms': _get_global_stats(local_dispatch_avg_ms, group),
+            'combine_ms': _get_global_stats(local_combine_avg_ms, group),
+            'dispatch_bw': _get_global_stats(local_dispatch_bw, group),
+            'combine_bw': _get_global_stats(local_combine_bw, group),
         }
+
         if rank == 0:
-            dispatch_bw = dispatch_bytes / 1e9 / (stats['dispatch_avg_ms'] / 1000) if stats['dispatch_avg_ms'] > 0 else 0
-            combine_bw = combine_bytes / 1e9 / (stats['combine_avg_ms'] / 1000) if stats['combine_avg_ms'] > 0 else 0
+            def format_metric(m):
+                return f"{m['avg']:.3f} (min={m['min']:.3f}, max={m['max']:.3f})"
+                
+            print(f"[perf] {name} dispatch time={format_metric(stats['dispatch_ms'])} ms | BW={format_metric(stats['dispatch_bw'])} GB/s", flush=True)
+            print(f"[perf] {name} combine  time={format_metric(stats['combine_ms'])} ms | BW={format_metric(stats['combine_bw'])} GB/s", flush=True)
             
-            print(f"[perf] {name} dispatch avg={stats['dispatch_avg_ms']:.3f} ms (min={stats['dispatch_min_ms']:.3f}, max={stats['dispatch_max_ms']:.3f}) | BW={dispatch_bw:.2f} GB/s", flush=True)
-            print(f"[perf] {name} combine  avg={stats['combine_avg_ms']:.3f} ms (min={stats['combine_min_ms']:.3f}, max={stats['combine_max_ms']:.3f}) | BW={combine_bw:.2f} GB/s", flush=True)
         return stats
 
     # Low Latency Dispatch
@@ -370,8 +393,8 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                       dispatch_bytes=num_dispatch_comm_bytes, combine_bytes=num_combine_comm_bytes)
     dist.barrier()
     if rank == 0 and deep_perf and mori_perf:
-        dispatch_ratio = mori_perf['dispatch_avg_ms'] / max(deep_perf['dispatch_avg_ms'], 1e-6)
-        combine_ratio = mori_perf['combine_avg_ms'] / max(deep_perf['combine_avg_ms'], 1e-6)
+        dispatch_ratio = mori_perf['dispatch_ms']['avg'] / deep_perf['dispatch_ms']['avg'] if deep_perf['dispatch_ms']['avg'] != 0 else float('inf')
+        combine_ratio = mori_perf['combine_ms']['avg'] / deep_perf['combine_ms']['avg'] if deep_perf['combine_ms']['avg'] != 0 else float('inf')
         print(f"[perf] MORI/DeepEP dispatch avg ratio: {dispatch_ratio:.3f}x", flush=True)
         print(f"[perf] MORI/DeepEP combine  avg ratio: {combine_ratio:.3f}x", flush=True)
 
