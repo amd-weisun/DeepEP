@@ -384,7 +384,7 @@ def _get_global_stats(val: float, group) -> dict:
     return {'avg': avg, 'min': mn, 'max': mx}
 
 
-def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict, run_path: str):
+def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict, run_path: str, num_sms: int = 32):
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
@@ -460,7 +460,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
     inplace_unique(rdma_idx, num_nodes)
     num_rdma_token_sent = rdma_idx.ne(-1).sum().item()
     rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
-    config = deep_ep.Config(NUM_SMs, 8, nvl_buffer_size, 16, rdma_buffer_size)
+    config = deep_ep.Config(num_sms, 8, nvl_buffer_size, 16, rdma_buffer_size)
 
     dispatch_args = {
         'x': x_e4m3 if use_fp8 else local_x,
@@ -623,13 +623,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 20)
         rdma_chunk_size = setting.get('deepep_dispatch_rdma_chunk_size', 20)
 
-        dispatch_config = deep_ep.Config(NUM_SMs, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
+        dispatch_config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
         tune_args = {'x': current_x, 'handle': deep_handle, 'config': dispatch_config}
         dispatch_runner = lambda: buffer_deep.dispatch(**tune_args)
 
         combine_nvl_chunk_size = setting.get('deepep_combine_nvl_chunk_size', 1)
         combine_rdma_chunk_size = setting.get('deepep_combine_rdma_chunk_size', 32)
-        combine_config = deep_ep.Config(NUM_SMs, combine_nvl_chunk_size, nvl_buffer_size, combine_rdma_chunk_size, rdma_buffer_size)
+        combine_config = deep_ep.Config(num_sms, combine_nvl_chunk_size, nvl_buffer_size, combine_rdma_chunk_size, rdma_buffer_size)
         
 
         combine_runner = lambda out: run_buffer_combine_from_dispatch(
@@ -732,6 +732,7 @@ def main():
     parser.add_argument('--deepep-dispatch-rdma-chunk-size', type=int, default=None)
     parser.add_argument('--deepep-combine-nvl-chunk-size', type=int, default=None)
     parser.add_argument('--deepep-combine-rdma-chunk-size', type=int, default=None)
+    parser.add_argument('--num-sms', type=int, default=32, help='Number of SMs to use(DeepEp only)')
 
     args = parser.parse_args()
 
@@ -773,13 +774,13 @@ def main():
             if rank_env == 0:
                 print('-------------------------------------------------------------------------', flush=True)
                 print(f"[info] launching '{setting['name']}' with backend mpi", flush=True)
-            compare_buffers(local_rank, args.num_local_ranks, args.backend, setting, args.path)
+            compare_buffers(local_rank, args.num_local_ranks, args.backend, setting, args.path, args.num_sms)
     else:
         for setting in settings_to_run:
             num_processes = args.num_local_ranks
             print('-------------------------------------------------------------------------', flush=True)
             print(f"[info] launching '{setting['name']}' with backend {args.backend} and {num_processes} local ranks", flush=True)
-            mp.spawn(compare_buffers, args=(num_processes, args.backend, setting, args.path), nprocs=num_processes)
+            mp.spawn(compare_buffers, args=(num_processes, args.backend, setting, args.path, args.num_sms), nprocs=num_processes)
             print('*************************************************************************', flush=True)
 
 
