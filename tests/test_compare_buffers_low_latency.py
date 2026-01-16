@@ -164,7 +164,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
                                   use_gpu_ll_layout_transform = use_gpu_ll_layout_transform,
                                   enable_profiling = enable_mori_profiling,
                                   )
-        buffer_deep.reset_profiling_data()
+        buffer_mori.reset_profiling_data()
 
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
