@@ -76,6 +76,7 @@ PRESET_SETTINGS = [
         'num_processes': 8,
         'use_fp8' : True,
         'use_gpu_ll_layout_transform' : True,
+        'enable_' : True,
     },
 ]
 
@@ -141,6 +142,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     num_nodes = int(os.getenv('WORLD_SIZE', 2))
     use_fp8 = setting.get('use_fp8', False)
     use_gpu_ll_layout_transform = setting.get('use_gpu_ll_layout_transform', True)
+    enable_mori_profiling = setting.get('profiling', False)
 
     if rank == 0:
         print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}, use_fp8 = {use_fp8}, use_gpu_ll_layout_transform = {use_gpu_ll_layout_transform} ", flush=True)
@@ -158,7 +160,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     buffer_mori = None
     if run_mori:
         buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=True,
-                                  num_qps_per_rank=num_experts // num_ranks, use_gpu_ll_layout_transform = use_gpu_ll_layout_transform)
+                                  num_qps_per_rank=num_experts // num_ranks, 
+                                  use_gpu_ll_layout_transform = use_gpu_ll_layout_transform,
+                                  enable_profiling = enable_mori_profiling,
+                                  )
 
     torch.manual_seed(setting.get('seed', 0))
     torch.cuda.manual_seed_all(setting.get('seed', 0))
@@ -392,6 +397,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         combine_ratio = mori_perf['combine_ms']['avg'] / deep_perf['combine_ms']['avg'] if deep_perf['combine_ms']['avg'] != 0 else float('inf')
         print(f"[perf] MORI/DeepEP dispatch avg ratio: {dispatch_ratio:.3f}x", flush=True)
         print(f"[perf] MORI/DeepEP combine  avg ratio: {combine_ratio:.3f}x", flush=True)
+    
+    if rank == 0 and mori_perf and enable_mori_profiling:
+        print('[info] MORI profiling breakdown:', flush=True)
+        dispatch_stats = buffer_mori.get_profiling_breakdown_dispatch()
+        combine_stats = buffer_mori.get_profiling_breakdown_combine()
+        print(dispatch_stats["average"]["pre"], dispatch_stats["average"]["core"], dispatch_stats["average"]["post"], dispatch_stats["average"]["gpu_core"], flush=True)
+        print(combine_stats["average"]["pre"], combine_stats["average"]["core"], combine_stats["average"]["post"], combine_stats["average"]["gpu_core"], flush=True)
 
     dist.barrier()
     if rank == 0:
@@ -410,11 +422,14 @@ def main():
     parser = argparse.ArgumentParser(description='Compare DeepEP and MORI low-latency buffers.')
     parser.add_argument('--path', choices=('deep', 'mori', 'both'), default='both',
                         help='Select which buffer path(s) to run: deep-only, mori-only, or both (default).')
+    parser.add_argument('--profiling', action='store_true', default=False,
+                        help='Enable profiling mode (not used in this test).')
     args = parser.parse_args()
     # python  tests/test_compare_buffers_low_latency.py --path both
 
     for setting in PRESET_SETTINGS:
         num_processes = setting.get('num_processes', 2)
+        setting['profiling'] = arg.profiling
         print('-------------------------------------------------------------------------', flush=True)
         print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
         
