@@ -398,7 +398,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} | GPU Core (ms) = {combine_stats["average"]["gpu_core"]} | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
 
     dist.barrier()
-    buffer_deep.reset_profiling_data()
+    buffer_mori.reset_profiling_data()
     deep_perf = benchmark_low_latency('DeepEP', buffer_deep, num_warmups=5, num_iters=50, 
                                       dispatch_bytes=num_dispatch_comm_bytes, combine_bytes=num_combine_comm_bytes)
     mori_perf = benchmark_low_latency('MORI', buffer_mori, num_warmups=5, num_iters=50,
