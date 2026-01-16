@@ -402,9 +402,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         print('[info] MORI profiling breakdown:', flush=True)
         dispatch_stats = buffer_mori.get_profiling_breakdown_low_latency_dispatch()
         combine_stats = buffer_mori.get_profiling_breakdown_low_latency_combine()
-        print('Pre-process (ms) | Core (ms) | Post-process (ms) | GPU Core (ms)', flush=True)
-        print(dispatch_stats["average"]["pre"], dispatch_stats["average"]["core"], dispatch_stats["average"]["post"], dispatch_stats["average"]["gpu_core"], flush=True)
-        print(combine_stats["average"]["pre"], combine_stats["average"]["core"], combine_stats["average"]["post"], combine_stats["average"]["gpu_core"], flush=True)
+        print('--- Dispatch ---', flush=True)
+        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]} | GPU Core (ms) = {dispatch_stats["average"]["gpu_core"]} | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
+        print('--- Combine ---', flush=True)
+        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} | GPU Core (ms) = {combine_stats["average"]["gpu_core"]} | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
 
     dist.barrier()
     if rank == 0:
