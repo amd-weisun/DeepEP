@@ -429,7 +429,7 @@ def main():
 
     for setting in PRESET_SETTINGS:
         num_processes = setting.get('num_processes', 2)
-        setting['profiling'] = arg.profiling
+        setting['profiling'] = args.profiling
         print('-------------------------------------------------------------------------', flush=True)
         print(f"[info] spawning comparison for setting '{setting['name']}' (num_processes={num_processes})", flush=True)
         
