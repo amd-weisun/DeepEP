@@ -400,8 +400,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
     
     if rank == 0 and mori_perf and enable_mori_profiling:
         print('[info] MORI profiling breakdown:', flush=True)
-        dispatch_stats = buffer_mori.get_profiling_breakdown_dispatch()
-        combine_stats = buffer_mori.get_profiling_breakdown_combine()
+        dispatch_stats = buffer_mori.get_profiling_breakdown_low_latency_dispatch()
+        combine_stats = buffer_mori.get_profiling_breakdown_low_latency_combine()
+        print('Pre-process (ms) | Core (ms) | Post-process (ms) | GPU Core (ms)', flush=True)
         print(dispatch_stats["average"]["pre"], dispatch_stats["average"]["core"], dispatch_stats["average"]["post"], dispatch_stats["average"]["gpu_core"], flush=True)
         print(combine_stats["average"]["pre"], combine_stats["average"]["core"], combine_stats["average"]["post"], combine_stats["average"]["gpu_core"], flush=True)
 
