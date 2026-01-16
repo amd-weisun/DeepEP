@@ -414,8 +414,10 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         
     buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
                                  num_qps_per_rank=max(num_experts // num_ranks, 1))
-    buffer_mori = mori.Buffer(group, int(1e9), int(1e9), low_latency_mode=False,
-                              num_qps_per_rank=max(num_experts // num_ranks, 1), reorder = reorder_mori, block_num=mori_block_num, 
+    buffer_mori = mori.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
+                              num_qps_per_rank=max(num_experts // num_ranks, 1), 
+                              # addition params for mori buffer, optional
+                              reorder = reorder_mori, block_num=mori_block_num, 
                               warp_num_per_block=mori_warp_num_per_block, rdma_block_num=mori_rdma_block_num,
                               kernel_type=kernel_type)
 
@@ -479,8 +481,6 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         'config': config,
         'async_finish': False,
     }
-    if rank == 0 and log_values:
-        print(f'[debug] rank {rank} topk_idx = {topk_idx}:', flush=True)
 
     run_deep = run_path in ('deep', 'both')
     run_mori = run_path in ('mori', 'both')
@@ -575,11 +575,11 @@ def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting
         print(f'[info]topk_idx shape: {topk_idx.shape}', flush=True)
     
     if run_deep:
-        deep_combined_x, deep_combined_weights, _ = buffer_deep.combine(deep_recv_x, deep_handle,
+        deep_combined_x, _, _ = buffer_deep.combine(deep_recv_x, deep_handle,
                                                                         topk_weights=deep_topk_weights,
                                                                         config=config)
     if run_mori:
-        mori_combined_x, mori_combined_weights, _ = buffer_mori.combine(mori_recv_x, mori_handle,
+        mori_combined_x, _, _ = buffer_mori.combine(mori_recv_x, mori_handle,
                                                                          topk_weights=mori_topk_weights,
                                                                          config=config)
 
