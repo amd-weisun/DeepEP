@@ -213,13 +213,13 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
 
     def bench_once(buffer):
         inputs = clone_low_latency_inputs()
-        torch.cuda.synchronize()
+        
         dispatch_start = torch.cuda.Event(enable_timing=True)
         dispatch_end = torch.cuda.Event(enable_timing=True)
         combine_start = torch.cuda.Event(enable_timing=True)
         combine_end = torch.cuda.Event(enable_timing=True)
 
-        dispatch_start.record()
+        
         dispatch_kwargs = dict(
             x=inputs['x'],
             topk_idx=inputs['topk_idx'],
@@ -230,16 +230,18 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         )
         if isinstance(buffer, mori.Buffer):
             dispatch_kwargs['topk_weights'] = inputs['topk_weights']
+        torch.cuda.synchronize()
+        dispatch_start.record()
         packed_recv_x, packed_recv_count, handle, event, hook = \
             buffer.low_latency_dispatch(**dispatch_kwargs)
-        dispatch_end.record()
         torch.cuda.synchronize()
         dist.barrier()
+        dispatch_end.record()
         combine_start.record()
         buffer.low_latency_combine(packed_recv_x, inputs['topk_idx'], inputs['topk_weights'], handle,
                                    async_finish=False)
-        combine_end.record()
         torch.cuda.synchronize()
+        combine_end.record()
         return dispatch_start.elapsed_time(dispatch_end), combine_start.elapsed_time(combine_end)
 
     def benchmark_low_latency(name: str, buffer, *, num_warmups: int = 1, num_iters: int = 5, dispatch_bytes: int = 0, combine_bytes: int = 0):
