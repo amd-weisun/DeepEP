@@ -193,13 +193,14 @@ def _bench_dispatch_and_combine(dispatch_fn, combine_fn):
 
     dispatch_start.record()
     dispatch_out = dispatch_fn()
-    dispatch_end.record()
+    
     torch.cuda.synchronize()
-
+    dispatch_end.record()
     combine_start.record()
     combine_fn(dispatch_out)
-    combine_end.record()
     torch.cuda.synchronize()
+    combine_end.record()
+    
 
     dispatch_time = dispatch_start.elapsed_time(dispatch_end) / 1e3
     combine_time = combine_start.elapsed_time(combine_end) / 1e3
