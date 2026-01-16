@@ -385,8 +385,18 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         mismatch |= not warn_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
     elif rank == 0:
         print(f"[info] skipping cross-buffer combine comparison (path={run_path}).", flush=True)
+    
+    if rank == 0 and run_mori and enable_mori_profiling:
+        print('[info] MORI profiling breakdown (after single run):', flush=True)
+        dispatch_stats = buffer_mori.get_profiling_breakdown_low_latency_dispatch()
+        combine_stats = buffer_mori.get_profiling_breakdown_low_latency_combine()
+        print('--- Dispatch ---', flush=True)
+        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]} | GPU Core (ms) = {dispatch_stats["average"]["gpu_core"]} | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
+        print('--- Combine ---', flush=True)
+        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} | GPU Core (ms) = {combine_stats["average"]["gpu_core"]} | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
 
     dist.barrier()
+    buffer_deep.reset_profiling_data()
     deep_perf = benchmark_low_latency('DeepEP', buffer_deep, num_warmups=5, num_iters=50, 
                                       dispatch_bytes=num_dispatch_comm_bytes, combine_bytes=num_combine_comm_bytes)
     mori_perf = benchmark_low_latency('MORI', buffer_mori, num_warmups=5, num_iters=50,
