@@ -213,7 +213,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
 
     def bench_once(buffer):
         inputs = clone_low_latency_inputs()
-        
+        torch.cuda.synchronize()
         dispatch_start = torch.cuda.Event(enable_timing=True)
         dispatch_end = torch.cuda.Event(enable_timing=True)
         combine_start = torch.cuda.Event(enable_timing=True)
@@ -230,7 +230,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         )
         if isinstance(buffer, mori.Buffer):
             dispatch_kwargs['topk_weights'] = inputs['topk_weights']
-        torch.cuda.synchronize()
+        
         dispatch_start.record()
         packed_recv_x, packed_recv_count, handle, event, hook = \
             buffer.low_latency_dispatch(**dispatch_kwargs)
@@ -387,16 +387,7 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         mismatch |= not warn_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
     elif rank == 0:
         print(f"[info] skipping cross-buffer combine comparison (path={run_path}).", flush=True)
-    
-    if rank == 0 and run_mori and enable_mori_profiling:
-        print('[info] MORI profiling breakdown (after single run):', flush=True)
-        dispatch_stats = buffer_mori.get_profiling_breakdown_low_latency_dispatch()
-        combine_stats = buffer_mori.get_profiling_breakdown_low_latency_combine()
-        print('--- Dispatch ---', flush=True)
-        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]} | GPU Core (ms) = {dispatch_stats["average"]["gpu_core"]} | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
-        print('--- Combine ---', flush=True)
-        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} | GPU Core (ms) = {combine_stats["average"]["gpu_core"]} | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
-
+    # Benchmarking
     dist.barrier()
     buffer_mori.reset_profiling_data()
     deep_perf = benchmark_low_latency('DeepEP', buffer_deep, num_warmups=5, num_iters=50, 
