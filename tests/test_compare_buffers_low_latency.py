@@ -379,9 +379,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         dispatch_stats = buffer_mori.get_profiling_breakdown_low_latency_dispatch()
         combine_stats = buffer_mori.get_profiling_breakdown_low_latency_combine()
         print('--- Dispatch ---', flush=True)
-        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]} | GPU Core (ms) = {dispatch_stats["average"]["gpu_core"]} | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
+        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]} | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
         print('--- Combine ---', flush=True)
-        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} | GPU Core (ms) = {combine_stats["average"]["gpu_core"]} | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
+        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} |  Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
 
     dist.barrier()
     deep_perf = benchmark_low_latency('DeepEP', buffer_deep, num_warmups=5, num_iters=50, 
@@ -400,9 +400,9 @@ def compare_buffers(local_rank: int, num_local_ranks: int, setting: dict, run_pa
         dispatch_stats = buffer_mori.get_profiling_breakdown_low_latency_dispatch()
         combine_stats = buffer_mori.get_profiling_breakdown_low_latency_combine()
         print('--- Dispatch ---', flush=True)
-        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]} | GPU Core (ms) = {dispatch_stats["average"]["gpu_core"]} | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
+        print(f'Pre-process (ms) = {dispatch_stats["average"]["pre"]} | Core (ms) {dispatch_stats["average"]["core"]}  | Post-process (ms) = {dispatch_stats["average"]["post"]} ', flush=True)
         print('--- Combine ---', flush=True)
-        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]} | GPU Core (ms) = {combine_stats["average"]["gpu_core"]} | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
+        print(f'Pre-process (ms) = {combine_stats["average"]["pre"]} | Core (ms) {combine_stats["average"]["core"]}  | Post-process (ms) = {combine_stats["average"]["post"]} ', flush=True)
 
     dist.barrier()
     if rank == 0:
