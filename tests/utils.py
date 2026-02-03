@@ -8,16 +8,22 @@ from typing import Optional
 
 def init_dist(local_rank: int, num_local_ranks: int, backend: str = 'nccl'):
     # NOTES: you may rewrite this function with your own cluster settings
-    if backend == 'nccl':
-        ip = os.getenv('MASTER_ADDR', '127.0.0.1')
-        port = int(os.getenv('MASTER_PORT', '8361'))
-        node_rank = int(os.getenv('RANK', 0))
+    # if backend == 'nccl':
+    ip = os.getenv('MASTER_ADDR', '127.0.0.1')
+    port = int(os.getenv('MASTER_PORT', '8361'))
+    node_rank = int(os.getenv('RANK', 0))
     num_nodes = int(os.getenv('WORLD_SIZE', 1))
     assert (num_local_ranks < 8 and num_nodes == 1) or num_local_ranks == 8
     if backend == 'nccl':
         dist.init_process_group(
             backend='nccl',
             init_method=f'tcp://{ip}:{port}',
+            world_size=num_nodes * num_local_ranks,
+            rank=node_rank * num_local_ranks + local_rank
+        )
+    if backend == 'gloo':
+        dist.init_process_group(
+            backend='gloo',
             world_size=num_nodes * num_local_ranks,
             rank=node_rank * num_local_ranks + local_rank
         )
@@ -40,7 +46,8 @@ def per_token_cast_to_fp8(x: torch.Tensor):
     m, n = x.shape
     x_view = x.view(m, -1, 128)
     x_amax = x_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
-    return (x_view * (448.0 / x_amax.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), (x_amax / 448.0).view(m, -1)
+    max_range = min(torch.finfo(torch.float8_e4m3fn).max, torch.finfo(torch.float8_e4m3fnuz).max) 
+    return (x_view * (max_range / x_amax.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), (x_amax / max_range).view(m, -1)
 
 
 def per_token_cast_back(x_fp8: torch.Tensor, x_scales: torch.Tensor):
@@ -72,7 +79,7 @@ def create_grouped_scores(scores: torch.Tensor, group_idx: torch.Tensor, num_gro
     return (scores * mask).view(num_tokens, num_experts)
 
 
-def bench(fn, num_warmups: int = 20, num_tests: int = 30, post_fn=None):
+def bench(fn, num_warmups: int = 1, num_tests: int = 2, post_fn=None):
     # Flush L2 cache with 256 MB data
     torch.cuda.synchronize()
     cache = torch.empty(int(256e6 // 4), dtype=torch.int, device='cuda')

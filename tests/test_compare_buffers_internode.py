@@ -1,0 +1,798 @@
+import argparse
+import datetime
+import math
+import os
+import queue
+import threading
+from typing import Optional
+
+import deep_ep
+import mori
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+
+from utils import init_dist, inplace_unique, create_grouped_scores, per_token_cast_to_fp8, per_token_cast_back
+
+
+NUM_SMs = 32
+
+PRESET_SETTINGS = [
+    # {
+    #     'name': 'setting_2a_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 16,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_2a_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 32,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_2b_debug',
+    #     'num_tokens': 128,
+    #     'hidden': 256,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 42,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_3',
+    #     'num_tokens': 2048,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 47,
+    #     'log_values': False,
+    #     'use_fp8' : True,
+    # },
+    # {
+    #     'name': 'setting_3',
+    #     'num_tokens': 2048,
+    #     'hidden': 7168,
+    #     'num_topk': 8,
+    #     'num_experts': 256,
+    #     'seed': 47,
+    #     'log_values': False,
+    #     'use_fp8' : False,
+    # },
+    {
+        'name': 'setting_4',
+        'num_tokens': 4096,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 47,
+        'log_values': False,
+        'use_fp8' : True,
+        'reorder_mori' : True,
+        'mori_block_num':32,
+        'mori_rdma_block_num':16,
+        'mori_warp_num_per_block':16 ,
+        'deepep_dispatch_nvl_chunk_size':24 ,
+        'deepep_dispatch_rdma_chunk_size':20 ,
+        'deepep_combine_nvl_chunk_size':4,
+        'deepep_combine_rdma_chunk_size':32 ,
+    },
+    {
+        'name': 'setting_4',
+        'num_tokens': 4096,
+        'hidden': 7168,
+        'num_topk': 8,
+        'num_experts': 256,
+        'seed': 47,
+        'log_values': False,
+        'use_fp8' : False,
+        'reorder_mori' : True,
+        'mori_block_num':32,
+        'mori_rdma_block_num':16,
+        'mori_warp_num_per_block':16 ,
+        'deepep_dispatch_nvl_chunk_size':24 ,
+        'deepep_dispatch_rdma_chunk_size':24 ,
+        'deepep_combine_nvl_chunk_size':4,
+        'deepep_combine_rdma_chunk_size':32 ,
+    },
+]
+
+
+class AsyncTensorDump:
+    def __init__(self, file_path: str):
+        directory = os.path.dirname(file_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        self._file_path = file_path
+        self._queue: queue.Queue = queue.Queue()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def log_tensor(self, label: str, tensor: torch.Tensor, context: str = ''):
+        if tensor is None:
+            return
+        lines = _tensor_rows_as_lines(tensor)
+        self._queue.put((label, context, lines))
+
+    def log_orderless_tensor(self, label: str, tensor: torch.Tensor, context: str = ''):
+        if tensor is None:
+            return
+        lines = _tensor_orderless_lines(tensor)
+        self._queue.put((label, context, lines))
+
+    def close(self):
+        self._queue.put(None)
+        self._thread.join()
+
+    def _worker(self):
+        with open(self._file_path, 'a') as handle:
+            while True:
+                item = self._queue.get()
+                if item is None:
+                    break
+                label, context, lines = item
+                timestamp = datetime.datetime.utcnow().isoformat()
+                prefix = f'[{timestamp}] {context} {label}\n'
+                handle.write(prefix)
+                handle.write('\n'.join(lines))
+                handle.write('\n---\n')
+
+
+def _format_row_for_logging(row: list[float]) -> str:
+    if not row:
+        return ''
+    first = float(row[0])
+    if len(row) > 1 and all(math.isclose(float(val), first, rel_tol=1e-6, abs_tol=1e-6) for val in row[1:]):
+        return f'{first:.6f}'
+    return ' '.join(f'{float(val):.6f}' for val in row)
+
+def _lex_argsort(matrix: torch.Tensor) -> torch.Tensor:
+    idx = torch.arange(matrix.size(0), device=matrix.device)
+    for col in range(matrix.size(1) - 1, -1, -1):
+        col_vals = matrix[idx, col]
+        perm = torch.argsort(col_vals, stable=True)
+        idx = idx[perm]
+    return idx
+
+def _tensor_rows_as_lines(tensor: torch.Tensor) -> list[str]:
+    tens = tensor.detach().cpu()
+    if tens.ndim == 0:
+        return [f'{tens.item():.6f}']
+    if tens.ndim == 1:
+        return [_format_row_for_logging(tens.tolist())]
+    lines: list[str] = []
+    for row in tens:
+        lines.append(_format_row_for_logging(row.tolist()))
+    return lines
+
+
+def _tensor_orderless_lines(tensor: torch.Tensor) -> list[str]:
+    mat = tensor.detach().float()
+    if mat.ndim == 0:
+        return [f'{mat.item():.6f}']
+    first_col = mat.reshape(mat.size(0), -1)[:, 0]
+    sorted_vals = torch.sort(first_col)[0]
+    return [f'{row.item():.6f}' for row in sorted_vals]
+
+
+def _bench_dispatch_and_combine(dispatch_fn, combine_fn):
+    torch.cuda.synchronize()
+    dispatch_start = torch.cuda.Event(enable_timing=True)
+    dispatch_end = torch.cuda.Event(enable_timing=True)
+    combine_start = torch.cuda.Event(enable_timing=True)
+    combine_end = torch.cuda.Event(enable_timing=True)
+
+    dispatch_start.record()
+    dispatch_out = dispatch_fn()
+    dispatch_end.record()
+    torch.cuda.synchronize()
+
+    combine_start.record()
+    combine_fn(dispatch_out)
+    combine_end.record()
+    torch.cuda.synchronize()
+
+    dispatch_time = dispatch_start.elapsed_time(dispatch_end) / 1e3
+    combine_time = combine_start.elapsed_time(combine_end) / 1e3
+    return dispatch_time, combine_time
+
+
+def benchmark_dispatch_combine(dispatch_fn, combine_fn, *, num_warmups: int = 1, num_iters: int = 5):
+    for _ in range(num_warmups):
+        _bench_dispatch_and_combine(dispatch_fn, combine_fn)
+    times = [_bench_dispatch_and_combine(dispatch_fn, combine_fn) for _ in range(num_iters)]
+    dispatch_times = [t[0] for t in times]
+    combine_times = [t[1] for t in times]
+    dispatch_stats = (sum(dispatch_times) / len(dispatch_times), min(dispatch_times), max(dispatch_times))
+    combine_stats = (sum(combine_times) / len(combine_times), min(combine_times), max(combine_times))
+    return dispatch_stats, combine_stats
+
+
+def run_buffer_combine_from_dispatch(buffer, dispatch_out, combine_config, *, fallback_topk_weights=None, override_handle=None):
+    recv_x, _, recv_topk_weights, _, handle, _ = dispatch_out
+    combine_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
+    topk_weights = recv_topk_weights if recv_topk_weights is not None else fallback_topk_weights
+    active_handle = handle if handle is not None else override_handle
+    if active_handle is None:
+        raise RuntimeError('combine requires a handle, but none was provided or cached.')
+    combine_kwargs = {'x': combine_x, 'handle': active_handle, 'config': combine_config}
+    if topk_weights is not None:
+        combine_kwargs['topk_weights'] = topk_weights
+    buffer.combine(**combine_kwargs)
+
+
+def _round_up_num_experts(base: int, num_ranks: int) -> int:
+    per_rank = max((base + num_ranks - 1) // num_ranks, 1)
+    return per_rank * num_ranks
+
+def _build_all_rank_debug_data(
+    num_ranks: int,
+    num_tokens: int,
+    hidden: int,
+    num_experts: int,
+    num_topk: int,
+    seed: int,
+    use_fp8: bool = False,
+    device: torch.device = torch.device('cpu'),
+):
+    num_nodes = int(os.getenv('WORLD_SIZE', 2))
+    total_values = num_ranks * num_tokens * hidden
+    # values = torch.arange(total_values, dtype=torch.float32, device=device)
+    
+    data_gen = torch.Generator(device=device)
+    data_gen.manual_seed(seed + num_ranks)
+    values = torch.rand(total_values, dtype=torch.float32, device=device, generator=data_gen)
+
+    all_rank_x = values.view(num_ranks, num_tokens, hidden).to(torch.bfloat16)
+    rank_topk_idx = []
+    rank_topk_weights = []
+    for rank_id in range(num_ranks):
+        idx_gen = torch.Generator(device=device)
+        idx_gen.manual_seed(seed + rank_id * 127 + 1)
+        topk_idx = torch.empty((num_tokens, num_topk), dtype=torch.long, device=device)
+        for token_id in range(num_tokens):
+            token_gen = torch.Generator(device=device)
+            token_gen.manual_seed(seed + rank_id * 127 + token_id * 31 + 1)
+            perm = torch.randperm(num_experts, generator=token_gen, dtype=torch.long, device=device)
+            topk_idx[token_id] = perm[:num_topk]
+
+        rank_topk_idx.append(topk_idx)
+
+        weight_gen = torch.Generator(device=device)
+        weight_gen.manual_seed(seed + num_ranks + rank_id * 211 + 3)
+        weights = torch.rand((num_tokens, num_topk), generator=weight_gen, dtype=torch.float32, device=device)
+        rank_topk_weights.append(weights)
+
+    return torch.stack(rank_topk_idx, dim=0), torch.stack(rank_topk_weights, dim=0), all_rank_x
+
+
+def compute_dispatch_meta(topk_idx: torch.Tensor, num_experts: int, num_ranks: int, num_tokens: int, num_local_ranks: int):
+    num_tokens_per_expert = torch.zeros((num_experts,), dtype=torch.int, device=topk_idx.device)
+    for i in range(num_experts):
+        num_tokens_per_expert[i] = (topk_idx == i).sum()
+
+    rank_idx = topk_idx // (num_experts // num_ranks)
+    rank_idx.masked_fill_(topk_idx == -1, -1)
+    inplace_unique(rank_idx, num_ranks)
+
+    num_tokens_per_rank = torch.empty((num_ranks,), dtype=torch.int, device=topk_idx.device)
+    token_idx_in_rank = torch.full((num_ranks, num_tokens), -1, dtype=torch.long, device=topk_idx.device)
+    for i in range(num_ranks):
+        num_tokens_per_rank[i] = (rank_idx == i).sum()
+        token_sel = (rank_idx == i).max(dim=-1)[0]
+        count = token_sel.sum().item()
+        tokens = torch.sort(token_sel.to(torch.int), descending=True)[1]
+        tokens[:count] = torch.sort(tokens[:count])[0]
+        token_idx_in_rank[i][tokens[:count]] = torch.arange(count, dtype=torch.long, device=topk_idx.device)
+    token_idx_in_rank = token_idx_in_rank.T.contiguous().to(torch.int)
+    is_token_in_rank = token_idx_in_rank >= 0
+
+    num_nodes = max(num_ranks // max(num_local_ranks, 1), 1)
+    rdma_rank_idx = rank_idx // max(num_local_ranks, 1)
+    rdma_rank_idx.masked_fill_(rank_idx == -1, -1)
+    inplace_unique(rdma_rank_idx, num_nodes)
+    num_tokens_per_rdma_rank = torch.empty((num_nodes,), dtype=torch.int, device=topk_idx.device)
+    for i in range(num_nodes):
+        num_tokens_per_rdma_rank[i] = (rdma_rank_idx == i).sum()
+
+    return num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank
+
+
+def warn_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-2, atol: float = 1e-2, rank: Optional[int] = None, *, log_values: bool = True) -> bool:
+    same = torch.allclose(a, b, rtol=rtol, atol=atol)
+    if rank is None or rank == 0:
+        if not same:
+            diff = torch.abs(a - b)
+            max_diff = torch.max(diff)
+            print(f'[warning] {name} mismatch: max diff {max_diff:.6e}', flush=True)
+        else:
+            print(f'[debug] {name} match.', flush=True)
+        print(f'[info] {name} tensor deep_ep shape {tuple(a.shape)}', flush=True)
+        print(f'[info] {name} tensor mori shape {tuple(b.shape)}', flush=True)
+        if log_values:
+            print(a.cpu(), flush=True)
+            print(b.cpu(), flush=True)
+        else:
+            print(f'[info] {name} tensor values suppressed (log_values False).', flush=True)
+    return same
+
+
+def orderless_allclose(name: str, a: torch.Tensor, b: torch.Tensor, rtol: float = 1e-2, atol: float = 1e-2, *, rank: Optional[int] = None, log_values: bool = True) -> bool:
+    def summarize(tensor: torch.Tensor) -> torch.Tensor:
+        mat = tensor.float().reshape(tensor.size(0), -1)
+        return torch.sort(mat.sum(dim=1))[0]
+
+    sum_a = summarize(a)
+    sum_b = summarize(b)
+    same = torch.allclose(sum_a, sum_b, rtol=rtol, atol=atol)
+    if rank is None or rank == 0:
+        if not same:
+            max_diff = torch.max(torch.abs(sum_a - sum_b))
+            print(f'[warning] {name} orderless mismatch: max diff {max_diff:.6e}', flush=True)
+        else:
+            print(f'[debug] {name} orderless match.', flush=True)
+        if log_values:
+            print(sum_a.cpu(), flush=True)
+            print(sum_b.cpu(), flush=True)
+        else:
+            print(f'[info] {name} orderless tensor values suppressed (log_values False).', flush=True)
+    return same
+
+
+def mask_mori_topk_by_rank(topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
+    experts_per_rank = max(num_experts // num_ranks, 1)
+    rank_start = rank * experts_per_rank
+    rank_end = rank_start + experts_per_rank
+    local_mask = (topk_idx >= rank_start) & (topk_idx < rank_end)
+    masked = topk_idx.clone()
+    masked[~local_mask] = -1
+    return masked
+
+
+def mask_mori_topk_weights_by_rank(topk_weights: torch.Tensor, topk_idx: torch.Tensor, rank: int, num_experts: int, num_ranks: int) -> torch.Tensor:
+    experts_per_rank = max(num_experts // num_ranks, 1)
+    rank_start = rank * experts_per_rank
+    rank_end = rank_start + experts_per_rank
+    local_mask = (topk_idx >= rank_start) & (topk_idx < rank_end)
+    masked = topk_weights.clone()
+    masked[~local_mask] = 0
+    return masked
+
+
+def _get_global_stats(val: float, group) -> dict:
+    t_avg = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_avg, op=dist.ReduceOp.SUM, group=group)
+    avg = t_avg.item() / dist.get_world_size(group)
+    
+    t_min = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_min, op=dist.ReduceOp.MIN, group=group)
+    mn = t_min.item()
+    
+    t_max = torch.tensor(val, device='cuda', dtype=torch.float32)
+    dist.all_reduce(t_max, op=dist.ReduceOp.MAX, group=group)
+    mx = t_max.item()
+    
+    return {'avg': avg, 'min': mn, 'max': mx}
+
+
+def compare_buffers(local_rank: int, num_local_ranks: int, backend: str, setting: dict, run_path: str, num_sms: int = 32):
+    rank, num_ranks, group = init_dist(local_rank, num_local_ranks, backend='gloo')
+    torch.manual_seed(setting.get('seed', 0))
+    torch.cuda.manual_seed_all(setting.get('seed', 0))
+    num_experts = _round_up_num_experts(setting['num_experts'], num_ranks)
+    num_tokens = setting['num_tokens']
+    hidden = setting['hidden']
+    num_topk = setting['num_topk']
+    log_values = setting.get('log_values', True)
+    use_fp8 = setting.get('use_fp8', False)
+
+    num_nodes = int(os.getenv('WORLD_SIZE', 1))
+    reorder_mori = setting.get('reorder_mori', False)
+    mori_block_num = setting.get('mori_block_num',32)
+    mori_rdma_block_num = setting.get('mori_rdma_block_num',16)
+    mori_warp_num_per_block = setting.get('mori_warp_num_per_block',16)
+    kernel_type = setting.get('mori_kernel_type',None)
+
+    tensor_dumper: Optional[AsyncTensorDump] = None
+    if run_path == 'both':
+        sanitized_name = setting['name'].replace(' ', '_')
+        dump_file = os.path.join('logs', 'internode', f'{sanitized_name}_{run_path}_rank{rank}.log')
+        tensor_dumper = AsyncTensorDump(dump_file)
+
+    if rank == 0:
+        print(f"[info] running setting '{setting['name']}' with num_experts={num_experts}, num_tokens={num_tokens}, hidden={hidden}, num_topk={num_topk}, num_nodes = {num_nodes}, num_ranks = {num_ranks}, use_fp8 = {use_fp8}", flush=True)
+        print(f"[info] group.rank()={group.rank()} , group.size()={group.size()} ", flush=True)
+        
+    buffer_deep = deep_ep.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
+                                 num_qps_per_rank=max(num_experts // num_ranks, 1))
+    buffer_mori = mori.Buffer(group, int(1e9), int(1e9) if (num_nodes > 1) else 0, low_latency_mode=False,
+                              num_qps_per_rank=max(num_experts // num_ranks, 1), 
+                              # addition params for mori buffer, optional
+                              reorder = reorder_mori, block_num=mori_block_num, 
+                              warp_num_per_block=mori_warp_num_per_block, rdma_block_num=mori_rdma_block_num,
+                              kernel_type=kernel_type)
+
+    
+    # device = torch.device('cuda', torch.cuda.current_device())
+    # all_rank_topk_idx, all_rank_topk_weights, all_rank_x = _build_all_rank_debug_data(
+    #     num_ranks, num_tokens, hidden, num_experts, num_topk, use_fp8, setting.get('seed', 0)
+    # )
+    # local_x = all_rank_x[rank].to(device)
+    # topk_idx = all_rank_topk_idx[rank].to(device)
+    # topk_weights = all_rank_topk_weights[rank].to(device)
+
+    # Data generation
+    torch.manual_seed(setting.get('seed', 0))
+    torch.cuda.manual_seed_all(setting.get('seed', 0))
+
+    device = torch.device('cuda', torch.cuda.current_device())
+
+    # x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * rank
+    # x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    # x_e4m3 = per_token_cast_to_fp8(x)
+
+    row_values = torch.arange(num_tokens, dtype=torch.float32, device=device)
+    row_values = (row_values + rank * num_tokens) * 0.1
+    # local_x = row_values.unsqueeze(1).expand(num_tokens, hidden).to(torch.bfloat16) * 0.1
+    # local_x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device='cuda') * (rank + 1) * 0.1
+    local_x = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device='cuda')
+    x_e4m3 = per_token_cast_to_fp8(local_x)
+
+    # if rank == 0 and use_fp8:
+        # print(f"[warning] x_e4m3fn = {x_e4m3[0]}.", flush=True)
+        # print(f"[warning] x_e4m3fn float32  = {x_e4m3[0].to(torch.float32)}.", flush=True)
+        # print(f"[warning] x_e4m3fnuz  = {x_e4m3[0].to(torch.float8_e4m3fnuz)}.", flush=True)
+        # print(f"[info] x_scales  = {x_e4m3[1]}.", flush=True)
+    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device='cuda').abs() + 1
+    topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)[1]
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device='cuda') 
+
+
+    num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank = compute_dispatch_meta(
+        topk_idx, num_experts, num_ranks, num_tokens, num_local_ranks)
+    experts_per_node = max(num_experts // max(num_nodes, 1), 1)
+    rdma_idx = topk_idx // experts_per_node
+    rdma_idx.masked_fill_(topk_idx == -1, -1)
+    inplace_unique(rdma_idx, num_nodes)
+    num_rdma_token_sent = rdma_idx.ne(-1).sum().item()
+    rdma_buffer_size, nvl_buffer_size = 128, (720 if num_ranks in (144, 160) else 512)
+    nvl_buffer_size = 256 if num_nodes == 1 else nvl_buffer_size
+    nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 8)
+    rdma_chunk_size = setting.get('deepep_dispatch_rdma_chunk_size', 16)
+    config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
+
+    dispatch_args = {
+        'x': x_e4m3 if use_fp8 else local_x,
+        'num_tokens_per_rank': num_tokens_per_rank,
+        'num_tokens_per_rdma_rank': num_tokens_per_rdma_rank,
+        'is_token_in_rank': is_token_in_rank,
+        'num_tokens_per_expert': num_tokens_per_expert,
+        'topk_idx': topk_idx,
+        'topk_weights': topk_weights,
+        'config': config,
+        'async_finish': False,
+    }
+
+    run_deep = run_path in ('deep', 'both')
+    run_mori = run_path in ('mori', 'both')
+
+    deep_output = buffer_deep.dispatch(**{k: (v.clone() if isinstance(v, torch.Tensor) else v)
+                                           for k, v in dispatch_args.items()}) if run_deep else None
+    mori_output = buffer_mori.dispatch(**dispatch_args) if run_mori else None
+
+    def normalize_result(result):
+        recv_x, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle, _ = result
+        recvx_scale = None
+        if isinstance(recv_x, tuple):
+            recvx_scale = recv_x[1]
+            recv_x = per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
+            # recv_x = recv_x[0]
+        else:
+            recv_x = recv_x
+        return recv_x, recvx_scale, recv_topk_idx, recv_topk_weights, recv_num_tokens_per_expert_list, handle
+
+    deep_recv_x = deep_topk_idx = deep_topk_weights = deep_num_list = deep_handle = None
+    mori_recv_x = mori_topk_idx = mori_topk_weights = mori_num_list = mori_handle = None
+    if run_deep:
+        deep_recv_x, deep_recvx_scale, deep_topk_idx, deep_topk_weights, deep_num_list, deep_handle = normalize_result(deep_output)
+    if run_mori:
+        mori_recv_x, mori_recvx_scale, mori_topk_idx, mori_topk_weights, mori_num_list, mori_handle = normalize_result(mori_output)
+
+    mismatch = False
+    if run_deep and run_mori:
+        if deep_num_list != mori_num_list:
+            mismatch = True
+            if rank == 0:
+                print('[warning] num_tokens_per_expert_list mismatch', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_num_list, flush=True)
+                    print('  mori  :', mori_num_list, flush=True)
+        else:
+            if rank == 0:
+                print(f'[debug] rank {rank} num_tokens_per_expert_list match:', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_num_list, flush=True)
+                    print('  mori  :', mori_num_list, flush=True)
+
+        mori_topk_idx_filtered = mask_mori_topk_by_rank(mori_topk_idx, rank, num_experts, num_ranks)
+        mori_topk_weights_filtered = mask_mori_topk_weights_by_rank(mori_topk_weights, mori_topk_idx_filtered, rank, num_experts, num_ranks)
+        if not torch.equal(deep_topk_idx, mori_topk_idx_filtered):
+            mismatch = True
+            if rank == 0:
+                print('[warning] topk indices mismatch', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+                    print('  mori  :', mori_topk_idx_filtered.cpu(), flush=True)
+        else:
+            if rank == 0:
+                print(f'[debug] rank {rank} topk indices match.', flush=True)
+                if log_values:
+                    print('  deep_ep:', deep_topk_idx.cpu(), flush=True)
+                    print('  mori  :', mori_topk_idx.cpu(), flush=True)
+
+        if mori_recvx_scale is not None and deep_recvx_scale is not None:
+            scale_match = warn_allclose('recv_x_scale', deep_recvx_scale, mori_recvx_scale, rank=rank, log_values=log_values)
+
+            mismatch |= not scale_match
+            deep_idx = _lex_argsort(deep_recvx_scale)
+            mori_idx = _lex_argsort(mori_recvx_scale)
+
+            orderless_scale_match = warn_allclose('recv_x_scale_orderless', deep_recvx_scale[deep_idx], mori_recvx_scale[mori_idx], rank=rank, log_values=log_values)
+            # if not scale_match and tensor_dumper is not None:
+            #     context = f"{setting['name']} rank{rank} recv_x_scale"
+            #     tensor_dumper.log_tensor('recv_x_scale/deep_ep', deep_recvx_scale, context)
+            #     tensor_dumper.log_tensor('recv_x_scale/mori', mori_recvx_scale, context)
+
+        recv_match = warn_allclose('recv_x', deep_recv_x.float(), mori_recv_x.float(), rank=rank, log_values=log_values)
+        mismatch |= not recv_match
+        # if not recv_match and tensor_dumper is not None:
+        #     context = f"{setting['name']} rank{rank} recv_x"
+        #     tensor_dumper.log_tensor('recv_x/deep_ep', deep_recv_x.float(), context)
+        #     tensor_dumper.log_tensor('recv_x/mori', mori_recv_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('recv_x/deep_ep_orderless', deep_recv_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('recv_x/mori_orderless', mori_recv_x.float(), context)
+            # if rank == 0:
+            #     tensor_dumper.log_tensor('all_rank_x', all_rank_x.float(), context)
+            #     tensor_dumper.log_tensor('all_rank_topk_idx', all_rank_topk_idx.to(torch.float32), context)
+            #     tensor_dumper.log_tensor('all_rank_topk_weights', all_rank_topk_weights, context)
+        mismatch |= not warn_allclose('recv_topk_weights', deep_topk_weights, mori_topk_weights_filtered, rank=rank, log_values=log_values)
+    elif rank == 0:
+        print(f'[info] Running only {"DeepEP" if run_deep else "MORI"} path; skipping cross-checks.', flush=True)
+
+    torch.cuda.synchronize()
+    dispatch_indices = mori_handle[0]
+    if rank == 0:
+        print(f'[info]dispatch_indices shape: {dispatch_indices.shape}', flush=True)
+        print(f'[info]topk_idx shape: {topk_idx.shape}', flush=True)
+    
+    if run_deep:
+        deep_combined_x, _, _ = buffer_deep.combine(deep_recv_x, deep_handle,
+                                                                        topk_weights=deep_topk_weights,
+                                                                        config=config)
+    if run_mori:
+        mori_combined_x, _, _ = buffer_mori.combine(mori_recv_x, mori_handle,
+                                                                         topk_weights=mori_topk_weights,
+                                                                         config=config)
+
+    if run_deep and run_mori:
+        combined_match = warn_allclose('combined_x', deep_combined_x.float(), mori_combined_x.float(), rank=rank, log_values=log_values)
+        mismatch |= not combined_match
+        # if not combined_match and tensor_dumper is not None:
+        #     context = f"{setting['name']} rank{rank} combined_x"
+        #     tensor_dumper.log_tensor('combined_x/deep_ep', deep_combined_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('combined_x/deep_ep_orderless', deep_combined_x.float(), context)
+        #     tensor_dumper.log_tensor('combined_x/mori', mori_combined_x.float(), context)
+        #     tensor_dumper.log_orderless_tensor('combined_x/mori_orderless', mori_combined_x.float(), context)
+        mismatch |= not orderless_allclose('combined_x', deep_combined_x, mori_combined_x, rank=rank, log_values=log_values)
+        
+    if rank == 0:
+        if mismatch:
+            print('[warning] DeepEP and MORI buffers had mismatches during comparison.', flush=True)
+        else:
+            print('DeepEP and MORI buffers dispatch/combine outputs match across ranks.', flush=True)
+    else:
+        if rank == 0:
+            print('Dispatch/combine finished for the selected path.', flush=True)
+    
+    # performance benchmarking and comparison
+    deep_dispatch_summaries = {}
+    deep_combine_summary = None
+    dispatch_bf16_rdma_send_bytes = num_rdma_token_sent * hidden * 2 if num_nodes > 1 else 0
+    if run_deep:
+        dispatch_bf16_nvl_recv_bytes = deep_recv_x.numel() * 2
+    elif run_mori:
+        dispatch_bf16_nvl_recv_bytes = mori_recv_x.numel() * 2
+    else:
+        dispatch_bf16_nvl_recv_bytes = 0
+    combine_bf16_nvl_send_bytes = dispatch_bf16_nvl_recv_bytes
+    combine_bf16_rdma_recv_bytes = dispatch_bf16_rdma_send_bytes
+    active_label = 'FP8' if use_fp8 else 'BF16'
+
+    fp8_factor = (1 + 4 / 128) / 2
+    throughput_scale = fp8_factor if use_fp8 else 1.0
+
+    if run_deep:
+
+        rdma_bytes = dispatch_bf16_rdma_send_bytes * throughput_scale
+        nvl_bytes = dispatch_bf16_nvl_recv_bytes * throughput_scale
+
+        current_x = dispatch_args['x']
+        nvl_chunk_size = setting.get('deepep_dispatch_nvl_chunk_size', 20)
+        rdma_chunk_size = setting.get('deepep_dispatch_rdma_chunk_size', 20)
+
+        dispatch_config = deep_ep.Config(num_sms, nvl_chunk_size, nvl_buffer_size, rdma_chunk_size, rdma_buffer_size)
+        tune_args = {'x': current_x, 'handle': deep_handle, 'config': dispatch_config}
+        dispatch_runner = lambda: buffer_deep.dispatch(**tune_args)
+
+        combine_nvl_chunk_size = setting.get('deepep_combine_nvl_chunk_size', 1)
+        combine_rdma_chunk_size = setting.get('deepep_combine_rdma_chunk_size', 32)
+        combine_config = deep_ep.Config(num_sms, combine_nvl_chunk_size, nvl_buffer_size, combine_rdma_chunk_size, rdma_buffer_size)
+        
+
+        combine_runner = lambda out: run_buffer_combine_from_dispatch(
+            buffer_deep, out, combine_config, fallback_topk_weights=deep_topk_weights, override_handle=deep_handle)
+        dispatch_stats, combine_stats = benchmark_dispatch_combine(
+            dispatch_runner, combine_runner, num_warmups=10, num_iters=100)
+
+        deep_dispatch_time = dispatch_stats[0]
+        deep_dispatch_summaries[active_label] = {
+            'time': _get_global_stats(deep_dispatch_time, group),
+            'rdma_gbps': _get_global_stats(rdma_bytes / 1e9 / deep_dispatch_time, group),
+            'nvl_gbps': _get_global_stats(nvl_bytes / 1e9 / deep_dispatch_time, group),
+        }
+
+        deep_combine_time = combine_stats[0]
+        deep_combine_summary = {
+            'time': _get_global_stats(deep_combine_time, group),
+            'rdma_gbps': _get_global_stats(combine_bf16_rdma_recv_bytes / 1e9 / deep_combine_time, group),
+            'nvl_gbps': _get_global_stats(combine_bf16_nvl_send_bytes / 1e9 / deep_combine_time, group),
+        }
+
+    mori_dispatch_summary = None
+    mori_combine_summary = None
+    if run_mori:
+        dispatch_runner = lambda: buffer_mori.dispatch(**dispatch_args)
+        combine_runner = lambda out: run_buffer_combine_from_dispatch(buffer_mori, out, config, fallback_topk_weights=topk_weights)
+        dispatch_stats, combine_stats = benchmark_dispatch_combine(dispatch_runner, combine_runner, num_warmups=10, num_iters=100)
+        mori_dispatch_time = dispatch_stats[0]
+        mori_dispatch_summary = {
+            'time': _get_global_stats(mori_dispatch_time, group),
+            'rdma_gbps': _get_global_stats((dispatch_bf16_rdma_send_bytes * throughput_scale) / 1e9 / mori_dispatch_time, group),
+            'nvl_gbps': _get_global_stats((dispatch_bf16_nvl_recv_bytes * throughput_scale) / 1e9 / mori_dispatch_time, group),
+        }
+        mori_combine_time = combine_stats[0]
+        mori_combine_summary = {
+            'time': _get_global_stats(mori_combine_time, group),
+            'rdma_gbps': _get_global_stats(combine_bf16_rdma_recv_bytes / 1e9 / mori_combine_time, group),
+            'nvl_gbps': _get_global_stats(combine_bf16_nvl_send_bytes / 1e9 / mori_combine_time, group),
+        }
+
+    if local_rank == 0:
+        active_label = 'FP8' if (use_fp8 and 'FP8' in deep_dispatch_summaries) else 'BF16'
+        
+        def format_metric(m, scale=1.0):
+            return f"{m['avg'] * scale:.2f} (min={m['min'] * scale:.2f}, max={m['max'] * scale:.2f})"
+
+        def print_perf(prefix, metrics):
+            print(f"[perf] {prefix}: time={format_metric(metrics['time'], 1e6)} us, RDMA={format_metric(metrics['rdma_gbps'])} GB/s, NVL={format_metric(metrics['nvl_gbps'])} GB/s", flush=True)
+
+        if run_deep and active_label in deep_dispatch_summaries:
+            print_perf(f"DeepEP dispatch ({active_label})", deep_dispatch_summaries[active_label])
+        if run_deep and deep_combine_summary is not None:
+            print_perf("DeepEP combine", deep_combine_summary)
+        if run_mori and mori_dispatch_summary is not None:
+            print_perf(f"MORI dispatch ({active_label})", mori_dispatch_summary)
+        if run_mori and mori_combine_summary is not None:
+            print_perf("MORI combine", mori_combine_summary)
+
+        if run_deep and run_mori and active_label in deep_dispatch_summaries and mori_dispatch_summary is not None:
+            deep_metrics = deep_dispatch_summaries[active_label]
+            ratio_time = mori_dispatch_summary['time']['avg'] / deep_metrics['time']['avg']
+            ratio_rdma = mori_dispatch_summary['rdma_gbps']['avg'] / deep_metrics['rdma_gbps']['avg'] if deep_metrics['rdma_gbps']['avg'] != 0 else float('inf')
+            ratio_nvl = mori_dispatch_summary['nvl_gbps']['avg'] / deep_metrics['nvl_gbps']['avg'] if deep_metrics['nvl_gbps']['avg'] != 0 else float('inf')
+            print(f"[perf] Dispatch ratio (MORI/DeepEP {active_label}): time={ratio_time:.2f}x, RDMA throughput={ratio_rdma:.2f}x, NVL throughput={ratio_nvl:.2f}x", flush=True)
+        if run_deep and run_mori and deep_combine_summary is not None and mori_combine_summary is not None:
+            ratio_time = mori_combine_summary['time']['avg'] / deep_combine_summary['time']['avg']
+            ratio_rdma = mori_combine_summary['rdma_gbps']['avg'] / deep_combine_summary['rdma_gbps']['avg'] if deep_combine_summary['rdma_gbps']['avg'] != 0 else float('inf')
+            ratio_nvl = mori_combine_summary['nvl_gbps']['avg'] / deep_combine_summary['nvl_gbps']['avg'] if deep_combine_summary['nvl_gbps']['avg'] != 0 else float('inf')
+            print(f"[perf] Combine ratio (MORI/DeepEP): time={ratio_time:.2f}x, RDMA throughput={ratio_rdma:.2f}x, NVL throughput={ratio_nvl:.2f}x", flush=True)
+
+    dist.barrier()
+
+    dist.destroy_process_group()
+    if tensor_dumper is not None:
+        tensor_dumper.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Compare deepEP and MORI buffers in an internode setting')
+    parser.add_argument('--backend', type=str, choices=['mpi', 'nccl', 'gloo'], default='gloo',
+                        help='Backend for distributed communication (nccl/gloo via mp.spawn, mpi via mpiexec/mpirun)')
+    parser.add_argument('--num-local-ranks', type=int, default=8,
+                        help='Number of local ranks (GPUs) per node for spanning the test')
+    parser.add_argument('--path', type=str, choices=['deep', 'mori', 'both'], default='both',
+                        help='Select which buffer implementation to run for debugging')
+    
+    # Custom setting arguments
+    parser.add_argument('--num-tokens', type=int, help='Number of tokens')
+    parser.add_argument('--hidden', type=int, help='Hidden dimension size')
+    parser.add_argument('--num-topk', type=int, help='Number of top-k experts')
+    parser.add_argument('--num-experts', type=int, help='Total number of experts')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--use-fp8', action='store_true', help='Use FP8 precision')
+    parser.add_argument('--reorder-mori', action='store_true', help='reorder MORI dispatch result to match DeepEP')
+    parser.add_argument('--log-values', action='store_true', help='Log tensor values')
+    parser.add_argument('--mori-block-num', type=int, default=32, help='MORI block num')
+    parser.add_argument('--mori-rdma-block-num', type=int, default=16, help='MORI RDMA block num')
+    parser.add_argument('--mori-warp-num-per-block', type=int, default=16 , help='MORI warp num per block')
+    parser.add_argument('--deepep-dispatch-nvl-chunk-size', type=int, default=None)
+    parser.add_argument('--deepep-dispatch-rdma-chunk-size', type=int, default=None)
+    parser.add_argument('--deepep-combine-nvl-chunk-size', type=int, default=None)
+    parser.add_argument('--deepep-combine-rdma-chunk-size', type=int, default=None)
+    parser.add_argument('--num-sms', type=int, default=32, help='Number of SMs to use(DeepEp only)')
+    parser.add_argument('--mori-kernel-type', type=str, choices=['intra', 'v0', 'v1', 'v1_ll', 'none'], default='none',
+                        help='mori-kernel-type (overridden by custom settings if provided)')
+
+    args = parser.parse_args()
+
+    settings_to_run = PRESET_SETTINGS
+    if args.num_tokens is not None:
+         # simple validation
+        if not all([args.hidden, args.num_topk, args.num_experts]):
+             parser.error("--num-tokens requires --hidden, --num-topk, and --num-experts")
+        
+        custom_setting = {
+            'name': 'custom_setting',
+            'num_tokens': args.num_tokens,
+            'hidden': args.hidden,
+            'num_topk': args.num_topk,
+            'num_experts': args.num_experts,
+            'seed': args.seed,
+            'log_values': args.log_values,
+            'use_fp8': args.use_fp8,
+            'reorder_mori': args.reorder_mori,
+            'mori_block_num': args.mori_block_num,
+            'mori_rdma_block_num': args.mori_rdma_block_num,
+            'mori_warp_num_per_block': args.mori_warp_num_per_block,
+        }
+        if args.mori_kernel_type != 'none':
+            custom_setting['mori_kernel_type'] = args.mori_kernel_type
+        if args.deepep_dispatch_nvl_chunk_size is not None:
+            custom_setting['deepep_dispatch_nvl_chunk_size'] = args.deepep_dispatch_nvl_chunk_size
+        if args.deepep_dispatch_rdma_chunk_size is not None:
+            custom_setting['deepep_dispatch_rdma_chunk_size'] = args.deepep_dispatch_rdma_chunk_size
+        if args.deepep_combine_nvl_chunk_size is not None:
+            custom_setting['deepep_combine_nvl_chunk_size'] = args.deepep_combine_nvl_chunk_size
+        if args.deepep_combine_rdma_chunk_size is not None:
+            custom_setting['deepep_combine_rdma_chunk_size'] = args.deepep_combine_rdma_chunk_size
+            
+        settings_to_run = [custom_setting]
+
+    if args.backend == 'mpi':
+        rank_env = int(os.getenv('RANK', '0'))
+        local_rank = rank_env % args.num_local_ranks
+        for setting in settings_to_run:
+            if rank_env == 0:
+                print('-------------------------------------------------------------------------', flush=True)
+                print(f"[info] launching '{setting['name']}' with backend mpi", flush=True)
+            compare_buffers(local_rank, args.num_local_ranks, args.backend, setting, args.path, args.num_sms)
+    else:
+        for setting in settings_to_run:
+            num_processes = args.num_local_ranks
+            print('-------------------------------------------------------------------------', flush=True)
+            print(f"[info] launching '{setting['name']}' with backend {args.backend} and {num_processes} local ranks", flush=True)
+            mp.spawn(compare_buffers, args=(num_processes, args.backend, setting, args.path, args.num_sms), nprocs=num_processes)
+            print('*************************************************************************', flush=True)
+
+
+if __name__ == '__main__':
+    main()
